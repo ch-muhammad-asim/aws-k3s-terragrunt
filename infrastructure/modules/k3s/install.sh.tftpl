@@ -3,10 +3,9 @@ set -euo pipefail
 
 exec > >(tee /var/log/k3s-bootstrap.log | logger -t k3s-bootstrap -s 2>/dev/console) 2>&1
 
-echo "[k3s-bootstrap] starting"
+echo "[k3s-bootstrap] target version: ${k3s_version}"
 
 dnf install -y curl jq
-systemctl enable --now amazon-ssm-agent || true
 
 curl -sfL https://get.k3s.io | \
   INSTALL_K3S_VERSION="${k3s_version}" \
@@ -19,6 +18,7 @@ curl -sfL https://get.k3s.io | \
 for i in $(seq 1 60); do
   if systemctl is-active --quiet k3s && /usr/local/bin/k3s kubectl get node >/dev/null 2>&1; then
     echo "[k3s-bootstrap] k3s is ready"
+    /usr/local/bin/k3s --version
     exit 0
   fi
   sleep 5

@@ -1,19 +1,16 @@
-# Shared K3s component defaults.
-# Keep platform versions and common sizing in one place instead of duplicating
-# them across every environment and region.
+# Shared K3s configuration defaults.
+# K3s is installed on an existing EC2 instance through AWS Systems Manager.
 terraform {
-  source = "${get_repo_root()}/infrastructure/modules//k3s-ec2"
+  source = "${get_repo_root()}/infrastructure/modules//k3s"
 }
 
 inputs = {
-  instance_type    = "t3.medium"
-  root_volume_size = 30
-
-  # Exact release pin for reproducible node rebuilds.
+  # Exact release pin for reproducible upgrades.
   k3s_version = "v1.36.4+k3s1"
-
-  ingress_allowed_cidrs = ["0.0.0.0/0"]
 
   # Traefik is managed separately by the pinned Helm deployment.
   enable_traefik = false
+
+  # Fail Terraform/Terragrunt if the K3s SSM association cannot converge.
+  wait_for_success_timeout_seconds = 900
 }

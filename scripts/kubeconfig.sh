@@ -8,17 +8,23 @@ done
 ROOT="$(git rev-parse --show-toplevel)"
 ENVIRONMENT="${ENV:-dev}"
 REGION="${REGION:-us-east-1}"
+EC2_DIR="${ROOT}/infrastructure/live/${ENVIRONMENT}/${REGION}/ec2"
 K3S_DIR="${ROOT}/infrastructure/live/${ENVIRONMENT}/${REGION}/k3s"
 KUBECONFIG_FILE="${KUBECONFIG_FILE:-${HOME}/.kube/k3s-${ENVIRONMENT}-${REGION}.yaml}"
 
-[[ -d "$K3S_DIR" ]] || {
-  echo "ERROR: stack not found: $K3S_DIR" >&2
-  echo "Create infrastructure/live/${ENVIRONMENT}/${REGION} first." >&2
-  exit 1
-}
+for dir in "$EC2_DIR" "$K3S_DIR"; do
+  [[ -d "$dir" ]] || {
+    echo "ERROR: stack not found: $dir" >&2
+    exit 1
+  }
+done
 
-INSTANCE_ID="$(cd "$K3S_DIR" && terragrunt output -raw instance_id)"
-PUBLIC_IP="$(cd "$K3S_DIR" && terragrunt output -raw public_ip)"
+# Force a read of the K3s state first so an operator does not accidentally
+# retrieve kubeconfig before the SSM-managed installation has converged.
+(cd "$K3S_DIR" && terragrunt output -raw k3s_version >/dev/null)
+
+INSTANCE_ID="$(cd "$EC2_DIR" && terragrunt output -raw instance_id)"
+PUBLIC_IP="$(cd "$EC2_DIR" && terragrunt output -raw public_ip)"
 
 CMD_ID="$(aws ssm send-command \
   --region "$REGION" \

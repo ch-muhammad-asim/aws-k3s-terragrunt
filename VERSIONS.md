@@ -17,17 +17,14 @@ Runtime/platform versions are intentionally pinned so a rebuild does not silentl
 | Argo CD wrapper chart | `1.0.0` | `kubernetes/helm/argocd/Chart.yaml` |
 | Terraform CLI | `>= 1.8.0` | `infrastructure/modules/*/versions.tf` |
 | AWS provider | `>= 5.0, < 7.0` | `infrastructure/modules/*/versions.tf` |
-| Amazon Linux | AL2023 current patched x86_64 AMI | AWS SSM public parameter in `infrastructure/modules/k3s-ec2/main.tf` |
+| Amazon Linux | AL2023 current patched x86_64 AMI | `infrastructure/modules/ec2/main.tf` via AWS SSM public parameter |
 
-## Version ownership
+## Ownership
 
-Platform defaults belong in shared component configuration, not an environment-specific leaf. K3s therefore has one version pin under `infrastructure/live/_common/k3s.hcl`, while Helm application versions live in each wrapper `Chart.yaml`.
-
-Environment/region leaves consume those pins and contain only wiring/overrides.
-
-## Platform relationship
-
-K3s is installed with bundled Traefik disabled. The separately managed Traefik Helm release owns the `traefik` IngressClass and its LoadBalancer Service. cert-manager manages TLS/ACME resources. Argo CD runs on top of that ingress/certificate layer.
+- EC2 lifecycle and AWS compute settings are owned by `infrastructure/modules/ec2`.
+- K3s installation/upgrades are owned independently by `infrastructure/modules/k3s` through AWS Systems Manager.
+- The K3s version pin belongs in shared K3s configuration, not in the EC2 module or an environment-specific leaf.
+- Helm application versions live in each wrapper `Chart.yaml`.
 
 ## Verify deployed versions
 
@@ -35,19 +32,14 @@ K3s is installed with bundled Traefik disabled. The separately managed Traefik H
 kubectl version
 kubectl get nodes -o wide
 
-helm -n traefik list
-helm -n traefik get metadata traefik
-helm -n cert-manager list
-helm -n cert-manager get metadata cert-manager
-helm -n argocd list
-helm -n argocd get metadata argocd
+make outputs ENV=dev REGION=us-east-1
 
-kubectl -n traefik get pods -o wide
-kubectl -n cert-manager get pods -o wide
-kubectl -n argocd get pods -o wide
+helm -n traefik list
+helm -n cert-manager list
+helm -n argocd list
 ```
 
-For the EC2 node itself:
+To verify K3s directly on the node:
 
 ```bash
 make ssm ENV=dev REGION=us-east-1

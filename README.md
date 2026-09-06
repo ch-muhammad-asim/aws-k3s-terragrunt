@@ -1,23 +1,21 @@
 # AWS EC2 K3s Platform with Terraform, Terragrunt and Helm
 
-A version-pinned, cost-conscious K3s platform on AWS EC2. Terraform modules, live Terragrunt configuration, and Kubernetes platform add-ons are separated so environments and regions can be added without copying a monolithic stack or embedding brittle relative paths.
-
-The repository contains no Hermes, Bedrock, model, or agent-specific configuration.
+A version-pinned K3s platform on AWS with clear lifecycle boundaries between networking, compute, K3s configuration, and Kubernetes add-ons.
 
 ## Architecture
 
-- AWS VPC and public subnet
-- single EC2 K3s server/worker for the current cost-optimized profile
-- Elastic IP for the Kubernetes API and ingress endpoint
-- SSM Session Manager instead of SSH
-- encrypted gp3 root volume and IMDSv2
-- K3s bundled Traefik disabled
-- Helm-managed Traefik ingress controller
-- cert-manager for certificate lifecycle and ACME
-- Argo CD for GitOps
-- Terragrunt S3 remote state with native lockfile support
+```text
+VPC -> EC2 -> K3s -> Traefik -> cert-manager -> Argo CD
+```
 
-The current topology is intentionally single-node and is not node-level HA. The repository layout is designed to scale independently from that initial topology.
+- VPC is managed independently.
+- EC2 compute, IAM/SSM, security group, EIP and EBS are managed by the EC2 module.
+- K3s installation and upgrades are managed by a separate K3s module through AWS Systems Manager.
+- K3s bundled Traefik is disabled.
+- Traefik, cert-manager and Argo CD are version-pinned Helm deployments.
+- Terraform state is separated by live component.
+
+The current compute profile is a single EC2 K3s server/worker to keep the initial deployment cost-conscious. It is not node-level HA; the module/state separation is designed so the topology can evolve without coupling K3s lifecycle to one EC2 resource definition.
 
 ## Repository layout
 
@@ -31,39 +29,55 @@ The current topology is intentionally single-node and is not node-level HA. The 
 ├── infrastructure/
 │   ├── modules/
 │   │   ├── vpc/
-│   │   └── k3s-ec2/
+│   │   ├── ec2/
+│   │   └── k3s/
 │   └── live/
 │       ├── root.hcl
 │       ├── _common/
 │       │   ├── vpc.hcl
+│       │   ├── ec2.hcl
 │       │   └── k3s.hcl
-│       └── dev/
-│           ├── env.hcl
-│           └── us-east-1/
-│               ├── region.hcl
-│               ├── vpc/terragrunt.hcl
-│               └── k3s/terragrunt.hcl
-├── kubernetes/
-│   └── helm/
-│       ├── traefik/
-│       ├── cert-manager/
-│       └── argocd/
+│       └── dev/us-east-1/
+│           ├── vpc/terragrunt.hcl
+│           ├── ec2/terragrunt.hcl
+│           └── k3s/terragrunt.hcl
+├── kubernetes/helm/
+│   ├── traefik/
+│   ├── cert-manager/
+│   └── argocd/
 └── scripts/
     ├── kubeconfig.sh
     └── platform.sh
 ```
 
-### Why this layout scales
+See [`docs/README.md`](docs/README.md) for the repository architecture and scaling rules.
 
-- `infrastructure/modules` contains reusable Terraform only.
-- `infrastructure/live/_common` owns shared component defaults and version pins.
-- `infrastructure/live/<environment>/<region>/<component>` contains thin live units only.
-- the K3s-to-VPC dependency is anchored to `region.hcl`; there is no `../vpc` or multi-level `../../..` traversal.
-- cluster resource names include environment and region to avoid cross-region IAM-name collisions.
-- operators and CI run the same root-level `make` interface rather than hard-coding deep paths.
-- remote-state identity is derived from environment, region and component rather than repository depth, so this directory refactor preserves the original backend keys.
+## Module boundaries
 
-See [`docs/README.md`](docs/README.md) for the scaling model.
+### VPC
+
+Owns networking only.
+
+### EC2
+
+Owns AWS compute infrastructure:
+
+- Amazon Linux 2023 AMI resolution
+- EC2 instance
+- encrypted gp3 root volume
+- IMDSv2
+- Elastic IP
+- security group/rules
+- IAM role and instance profile
+- SSM managed-instance permissions
+
+It contains **no K3s installation logic**.
+
+### K3s
+
+Consumes the EC2 `instance_id` and `public_ip` outputs and manages K3s through an `AWS-RunShellScript` SSM association. Changing the K3s version updates K3s independently instead of changing EC2 user data and forcing an instance replacement.
+
+The AWS provider supports waiting for an SSM association to reach `Success`; this module uses that behavior so a failed K3s bootstrap fails the infrastructure apply rather than silently continuing.
 
 ## Prerequisites
 
@@ -75,8 +89,6 @@ See [`docs/README.md`](docs/README.md) for the scaling model.
 - curl
 - git
 - AWS permissions for VPC, EC2, IAM, S3 and Systems Manager
-
-Verify tooling from the repository root:
 
 ```bash
 make check
@@ -92,27 +104,11 @@ aws sts get-caller-identity
 - Argo CD Helm chart `10.8.1`
 - Argo CD `v3.5.2`
 
-See [`VERSIONS.md`](VERSIONS.md) for the complete matrix.
+See [`VERSIONS.md`](VERSIONS.md).
 
-## Environment and region selection
+## Deploy
 
-The command interface is parameterized:
-
-```bash
-make plan ENV=dev REGION=us-east-1
-```
-
-`dev` and `us-east-1` are defaults, so for the current stack this is equivalent to:
-
-```bash
-make plan
-```
-
-No documentation or automation needs to know the physical depth of a Terragrunt unit.
-
-## Deploy infrastructure
-
-From the repository root:
+All operator commands are run from the repository root. `ENV` and `REGION` are parameters instead of hard-coded traversal paths.
 
 ```bash
 make bootstrap ENV=dev REGION=us-east-1
@@ -121,100 +117,90 @@ make plan      ENV=dev REGION=us-east-1
 make apply     ENV=dev REGION=us-east-1
 ```
 
-The Kubernetes API defaults to the caller's current public `/32`. To use an office or VPN range:
+The apply order is:
+
+```text
+VPC -> EC2 -> K3s
+```
+
+You can review/apply each lifecycle separately:
+
+```bash
+make vpc-plan ENV=dev REGION=us-east-1
+make ec2-plan ENV=dev REGION=us-east-1
+make k3s-plan ENV=dev REGION=us-east-1
+
+make vpc-apply ENV=dev REGION=us-east-1
+make ec2-apply ENV=dev REGION=us-east-1
+make k3s-apply ENV=dev REGION=us-east-1
+```
+
+The Kubernetes API defaults to the current operator public `/32`. Override it for office/VPN access:
 
 ```bash
 export TG_OPERATOR_CIDR="203.0.113.0/24"
 make plan ENV=dev REGION=us-east-1
-make apply ENV=dev REGION=us-east-1
 ```
-
-### Existing deployments
-
-This refactor keeps the original S3 state-object naming convention so moving the live configuration does not intentionally orphan existing state. However, resource naming is now region-aware (`k3s-dev-us-east-1` rather than `k3s-dev`). If infrastructure already exists, review `make plan` before applying because name changes can replace resources, and the K3s module also uses `user_data_replace_on_change = true`.
 
 ## Retrieve kubeconfig
 
-Use the root-level helper; it discovers the selected stack and waits for the SSM command rather than using a fixed sleep:
-
 ```bash
 make kubeconfig ENV=dev REGION=us-east-1
-```
-
-Default output:
-
-```text
-~/.kube/k3s-dev-us-east-1.yaml
-```
-
-Then:
-
-```bash
 export KUBECONFIG=~/.kube/k3s-dev-us-east-1.yaml
 kubectl get nodes -o wide
-kubectl version
 ```
 
-## Deploy the Kubernetes platform
+The helper reads EC2 identity/network outputs from the EC2 state and requires the K3s state to exist before retrieving `/etc/rancher/k3s/k3s.yaml` over SSM.
 
-The supported order is Traefik -> cert-manager -> Argo CD.
+## Deploy Kubernetes platform add-ons
 
 ```bash
 make platform-install
 make platform-test
 ```
 
-The scripts call the component-local install/test scripts and fail on the first unsuccessful step.
+Installation order:
 
-Detailed component documentation:
+```text
+Traefik -> cert-manager -> Argo CD
+```
 
-- `kubernetes/helm/traefik/README.md`
-- `kubernetes/helm/cert-manager/README.md`
-- `kubernetes/helm/argocd/README.md`
-
-## Verify the platform
+Verify:
 
 ```bash
 kubectl get nodes -o wide
 kubectl get ingressclass
-
 helm -n traefik list
 helm -n cert-manager list
 helm -n argocd list
-
 kubectl -n traefik get pods,svc
 kubectl -n cert-manager get pods
 kubectl -n argocd get pods
 ```
 
-## Infrastructure outputs and node access
+## Outputs and node access
 
 ```bash
 make outputs ENV=dev REGION=us-east-1
 make ssm     ENV=dev REGION=us-east-1
 ```
 
-There is no SSH ingress rule or EC2 key-pair dependency.
+There is no inbound SSH rule or EC2 key-pair dependency.
 
-## Component-specific planning
+## Existing state warning
 
-```bash
-make vpc-plan ENV=dev REGION=us-east-1
-make k3s-plan ENV=dev REGION=us-east-1
-```
+An earlier revision used one combined `k3s-ec2` module/state. If that revision has already provisioned a real environment, migrate the existing resources into the new EC2 state before applying this split. Do not run the new K3s state against an old combined state without reviewing/migrating it first. See `docs/README.md`.
 
-The same interface works for another environment/region after its thin live units are added.
+New deployments require no state migration.
 
 ## Destroy
-
-Remove Kubernetes add-ons in reverse order, then infrastructure:
 
 ```bash
 make platform-uninstall
 make destroy ENV=dev REGION=us-east-1
 ```
 
-cert-manager CRDs are intentionally retained by its chart configuration; review cert-manager custom resources before deleting those CRDs manually.
+Destroy order is K3s -> EC2 -> VPC.
 
 ## Security notes
 
@@ -222,7 +208,5 @@ cert-manager CRDs are intentionally retained by its chart configuration; review 
 - SSH `22` is not exposed; use SSM.
 - IMDSv2 is required.
 - EBS is encrypted.
-- Traefik dashboard is not publicly exposed by default.
-- Cloudflare examples contain placeholders only; never commit a real token.
-- Never commit kubeconfig, Terraform state, cloud credentials, or private keys.
-- For production, add multi-node failure domains, private subnets, backup/restore, observability, secret management and a production load-balancing strategy.
+- Traefik dashboard is not public by default.
+- Never commit kubeconfig, Terraform state, cloud credentials, Cloudflare tokens or private keys.

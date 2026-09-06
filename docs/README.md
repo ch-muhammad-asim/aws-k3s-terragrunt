@@ -1,56 +1,66 @@
-# Repository layout and scaling model
+# Repository architecture
 
-The repository separates reusable Terraform modules from live Terragrunt configuration and keeps environment/region leaf units intentionally small.
+The repository separates AWS networking, EC2 compute, K3s configuration, and Kubernetes add-ons into independent lifecycle boundaries.
 
 ```text
 infrastructure/
 ├── modules/
 │   ├── vpc/
-│   └── k3s-ec2/
+│   ├── ec2/
+│   └── k3s/
 └── live/
     ├── root.hcl
     ├── _common/
     │   ├── vpc.hcl
+    │   ├── ec2.hcl
     │   └── k3s.hcl
     └── dev/
         ├── env.hcl
         └── us-east-1/
             ├── region.hcl
             ├── vpc/terragrunt.hcl
+            ├── ec2/terragrunt.hcl
             └── k3s/terragrunt.hcl
 ```
 
+## Dependency graph
+
+```text
+VPC -> EC2 -> K3s -> Traefik -> cert-manager -> Argo CD
+```
+
+Each Terraform/Terragrunt unit owns one lifecycle boundary:
+
+- `vpc` owns networking.
+- `ec2` owns the instance, EIP, IAM/SSM access, security group and EBS settings.
+- `k3s` owns K3s installation/configuration on the existing instance through an AWS Systems Manager association.
+- Helm directories own Kubernetes platform add-ons.
+
+Updating the K3s version therefore updates the K3s SSM association rather than replacing the EC2 instance. Compute changes can also be reviewed independently from Kubernetes distribution changes.
+
 ## Design rules
 
-1. **Modules are immutable building blocks.** Environment-specific values never belong under `infrastructure/modules`.
-2. **Shared component defaults live once.** Versions, baseline instance sizing and common component configuration are kept under `infrastructure/live/_common`.
-3. **Leaf units only wire dependencies and overrides.** A new environment or region should not duplicate entire component configurations.
-4. **No brittle parent traversal for dependencies.** The K3s unit discovers its region directory from `region.hcl` and resolves the VPC sibling from that anchor. There is no `../vpc` or multi-level `../../..` dependency path.
-5. **Resource names include environment and region.** This prevents account-global resources such as IAM roles from colliding when the same environment is deployed in multiple regions.
-6. **Operators run commands from the repository root.** `Makefile` and scripts centralize path construction so documentation and CI jobs do not embed deep environment-specific paths.
+1. **One concern per module/state.** EC2 resources do not belong in the K3s module and K3s bootstrap logic does not belong in the EC2 module.
+2. **Reusable modules contain no environment values.** Environment-specific values stay under `infrastructure/live`.
+3. **Shared component defaults live once.** Baseline EC2 sizing and K3s version pins live under `infrastructure/live/_common`.
+4. **Leaf units only wire dependencies and overrides.** A new region does not copy full Terraform modules.
+5. **Dependencies are explicit.** K3s consumes EC2 outputs; EC2 consumes VPC outputs.
+6. **Operators use the root command interface.** `Makefile` and scripts centralize path resolution.
+7. **Version upgrades must be explicit.** K3s and Helm application versions remain pinned and auditable in Git.
 
 ## Add another region
 
-Create only the region metadata and thin leaf units:
+Create thin region units only:
 
 ```text
 infrastructure/live/dev/eu-west-1/
 ├── region.hcl
 ├── vpc/terragrunt.hcl
+├── ec2/terragrunt.hcl
 └── k3s/terragrunt.hcl
 ```
 
-The region file contains:
-
-```hcl
-locals {
-  aws_region = "eu-west-1"
-}
-```
-
-The VPC and K3s leaf units use the same include pattern as `dev/us-east-1`; override CIDRs or sizing only when that region differs.
-
-Run it from the repository root:
+Then use the same interface:
 
 ```bash
 make plan ENV=dev REGION=eu-west-1
@@ -60,27 +70,21 @@ make kubeconfig ENV=dev REGION=eu-west-1
 
 ## Add another environment
 
-Create an environment file such as:
+Create the environment metadata and required region units, for example:
 
 ```text
 infrastructure/live/prod/env.hcl
+infrastructure/live/prod/us-east-1/...
 ```
 
-```hcl
-locals {
-  environment  = "prod"
-  project_name = "k3s"
-}
-```
-
-Then add the required region leaf units beneath `prod/<region>/`.
-
-## CI/CD convention
-
-CI should pass environment and region as parameters rather than checking in separate scripts for every target:
+CI receives environment and region as parameters:
 
 ```bash
 make plan ENV="$ENVIRONMENT" REGION="$AWS_REGION"
 ```
 
-The same interface works locally, in GitHub Actions, or in another CI system.
+## State migration note
+
+The repository previously used a combined `k3s-ec2` Terraform module/state. If that older layout has already been applied to a real AWS account, do **not** blindly apply this split over the old state. Back up the state and migrate/import the existing EC2 resources into the new EC2 state before allowing the K3s state to manage only its SSM association.
+
+For a new deployment, no migration is required.

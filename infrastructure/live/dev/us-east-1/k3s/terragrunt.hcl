@@ -9,22 +9,15 @@ include "component" {
 }
 
 locals {
-  # Anchor sibling dependencies to the region config instead of brittle ../ paths.
-  # The environment hierarchy can grow or move without changing this dependency.
   region_dir = dirname(find_in_parent_folders("region.hcl"))
-
-  operator_cidr = get_env(
-    "TG_OPERATOR_CIDR",
-    "${trimspace(run_cmd("--terragrunt-quiet", "curl", "-fsS", "https://checkip.amazonaws.com"))}/32",
-  )
 }
 
-dependency "vpc" {
-  config_path = "${local.region_dir}/vpc"
+dependency "ec2" {
+  config_path = "${local.region_dir}/ec2"
 
   mock_outputs = {
-    vpc_id            = "vpc-00000000000000000"
-    public_subnet_ids = ["subnet-00000000000000000"]
+    instance_id = "i-00000000000000000"
+    public_ip   = "203.0.113.10"
   }
 
   mock_outputs_allowed_terraform_commands = ["validate", "plan", "init"]
@@ -32,8 +25,6 @@ dependency "vpc" {
 
 inputs = {
   cluster_name = include.root.locals.cluster_name
-  vpc_id       = dependency.vpc.outputs.vpc_id
-  subnet_id    = dependency.vpc.outputs.public_subnet_ids[0]
-
-  api_allowed_cidrs = [local.operator_cidr]
+  instance_id  = dependency.ec2.outputs.instance_id
+  public_ip    = dependency.ec2.outputs.public_ip
 }
