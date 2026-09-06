@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+exec > >(tee /var/log/k3s-bootstrap.log | logger -t k3s-bootstrap -s 2>/dev/console) 2>&1
+
+echo "[k3s-bootstrap] starting"
+
+dnf install -y curl jq
+systemctl enable --now amazon-ssm-agent || true
+
+curl -sfL https://get.k3s.io | \
+  INSTALL_K3S_CHANNEL="${k3s_channel}" \
+  sh -s - server \
+    --node-name "${cluster_name}" \
+    --tls-san "${public_ip}" \
+    --write-kubeconfig-mode 600 \
+    ${traefik_flag}
+
+for i in $(seq 1 60); do
+  if systemctl is-active --quiet k3s && /usr/local/bin/k3s kubectl get node >/dev/null 2>&1; then
+    echo "[k3s-bootstrap] k3s is ready"
+    exit 0
+  fi
+  sleep 5
+done
+
+echo "[k3s-bootstrap] k3s did not become ready in time" >&2
+systemctl status k3s --no-pager || true
+exit 1
