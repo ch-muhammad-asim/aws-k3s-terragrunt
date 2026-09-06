@@ -1,6 +1,6 @@
 # Kubernetes platform Helm deployments
 
-These charts are intentionally version-pinned. Deploy them after the K3s infrastructure is reachable.
+These charts are version-pinned and installed after K3s is reachable.
 
 ## Deployment order
 
@@ -8,23 +8,19 @@ These charts are intentionally version-pinned. Deploy them after the K3s infrast
 2. `cert-manager` - certificate lifecycle and ACME support
 3. `argocd` - GitOps controller/UI
 
+From the repository root:
+
 ```bash
-export KUBECONFIG=~/.kube/k3s-dev.yaml
-kubectl get nodes -o wide
+make kubeconfig ENV=dev REGION=us-east-1
+export KUBECONFIG=~/.kube/k3s-dev-us-east-1.yaml
 
-cd kubernetes/helm/traefik
-./install.sh
-./test.sh
-
-cd ../cert-manager
-./install.sh
-./test.sh
-
-cd ../argocd
-./install.sh
+make platform-install
+make platform-test
 ```
 
-## Verify the platform
+The root-level interface avoids environment-specific `cd ../../..` paths in operator runbooks and CI.
+
+## Verify
 
 ```bash
 helm -n traefik list
@@ -36,4 +32,4 @@ kubectl -n cert-manager get pods
 kubectl -n argocd get pods
 ```
 
-See each component README and the repository-level `VERSIONS.md` for pinned versions and upgrade procedures.
+Use the component READMEs for chart-level inspection, manual Helm commands, examples and troubleshooting.

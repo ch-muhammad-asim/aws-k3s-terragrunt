@@ -1,203 +1,178 @@
-# AWS EC2 K3s with Terraform + Terragrunt
+# AWS EC2 K3s Platform with Terraform, Terragrunt and Helm
 
-A clean, cost-conscious single-node K3s deployment on AWS EC2 with version-pinned Traefik, cert-manager, and Argo CD Helm deployments. This repository intentionally contains **no Hermes agent, Bedrock IAM, model configuration, or application manifests**.
+A version-pinned, cost-conscious K3s platform on AWS EC2. Terraform modules, live Terragrunt configuration, and Kubernetes platform add-ons are separated so environments and regions can be added without copying a monolithic stack or embedding brittle relative paths.
+
+The repository contains no Hermes, Bedrock, model, or agent-specific configuration.
 
 ## Architecture
 
-- 1 AWS VPC
-- 1 public subnet
-- Internet Gateway + public route table
-- 1 EC2 instance running K3s server **and workloads**
-- 1 Elastic IP for a stable Kubernetes API / ingress endpoint
-- Security group:
-  - TCP 6443 only from your operator CIDR
-  - TCP 80/443 from configurable ingress CIDRs
-  - no inbound SSH
-- AWS Systems Manager (SSM) for shell access
-- K3s bundled Traefik **disabled**
+- AWS VPC and public subnet
+- single EC2 K3s server/worker for the current cost-optimized profile
+- Elastic IP for the Kubernetes API and ingress endpoint
+- SSM Session Manager instead of SSH
+- encrypted gp3 root volume and IMDSv2
+- K3s bundled Traefik disabled
 - Helm-managed Traefik ingress controller
-- K3s ServiceLB used for the Traefik `LoadBalancer` Service
-- cert-manager for certificate lifecycle / Let's Encrypt
+- cert-manager for certificate lifecycle and ACME
 - Argo CD for GitOps
-- K3s local-path storage enabled by default
-- S3 Terraform state via Terragrunt
+- Terragrunt S3 remote state with native lockfile support
 
-> This is intentionally a single-node cluster. It is suitable for an initial/small deployment where cost matters more than node-level HA. Move to multiple physical EC2 instances when you need real HA.
+The current topology is intentionally single-node and is not node-level HA. The repository layout is designed to scale independently from that initial topology.
 
 ## Repository layout
 
 ```text
 .
+├── Makefile
+├── README.md
 ├── VERSIONS.md
+├── docs/
+│   └── repository-layout.md
+├── infrastructure/
+│   ├── modules/
+│   │   ├── vpc/
+│   │   └── k3s-ec2/
+│   └── live/
+│       ├── root.hcl
+│       ├── _common/
+│       │   ├── vpc.hcl
+│       │   └── k3s.hcl
+│       └── dev/
+│           ├── env.hcl
+│           └── us-east-1/
+│               ├── region.hcl
+│               ├── vpc/terragrunt.hcl
+│               └── k3s/terragrunt.hcl
 ├── kubernetes/
 │   └── helm/
-│       ├── README.md
 │       ├── traefik/
-│       │   ├── Chart.yaml
-│       │   ├── values.yaml
-│       │   ├── values-https-redirect.example.yaml
-│       │   ├── install.sh
-│       │   ├── test.sh
-│       │   ├── uninstall.sh
-│       │   ├── examples/whoami.yaml
-│       │   └── README.md
 │       ├── cert-manager/
-│       │   ├── Chart.yaml
-│       │   ├── values.yaml
-│       │   ├── install.sh
-│       │   ├── test.sh
-│       │   ├── uninstall.sh
-│       │   ├── examples/
-│       │   │   ├── selfsigned-smoke-test.yaml
-│       │   │   ├── cloudflare-secret.example.yaml
-│       │   │   ├── clusterissuer-staging.example.yaml
-│       │   │   ├── clusterissuer-production.example.yaml
-│       │   │   ├── certificate.example.yaml
-│       │   │   └── ingress-tls.example.yaml
-│       │   └── README.md
 │       └── argocd/
-│           ├── Chart.yaml
-│           ├── values.yaml
-│           ├── values-traefik.example.yaml
-│           ├── install.sh
-│           ├── uninstall.sh
-│           └── README.md
-├── terraform/
-│   └── modules/
-│       ├── vpc/
-│       └── k3s-ec2/
-└── terragrunt/
-    ├── root.hcl
-    └── env/dev/region/us-east-1/
-        ├── region.hcl
-        ├── vpc/terragrunt.hcl
-        └── k3s/terragrunt.hcl
+└── scripts/
+    ├── kubeconfig.sh
+    └── platform.sh
 ```
+
+### Why this layout scales
+
+- `infrastructure/modules` contains reusable Terraform only.
+- `infrastructure/live/_common` owns shared component defaults and version pins.
+- `infrastructure/live/<environment>/<region>/<component>` contains thin live units only.
+- the K3s-to-VPC dependency is anchored to `region.hcl`; there is no `../vpc` or multi-level `../../..` traversal.
+- cluster resource names include environment and region to avoid cross-region IAM-name collisions.
+- operators and CI run the same root-level `make` interface rather than hard-coding deep paths.
+- remote-state identity is derived from environment, region and component rather than repository depth, so this directory refactor preserves the original backend keys.
+
+See [`docs/repository-layout.md`](docs/repository-layout.md) for the scaling model.
 
 ## Prerequisites
 
-- AWS CLI authenticated to the target AWS account
-- Terraform >= 1.8
-- Terragrunt 1.x
+- AWS CLI
+- Terraform `>= 1.8.0`
+- Terragrunt `1.x`
 - Helm 3
 - kubectl
-- `curl`
-- permissions to create VPC, EC2, IAM, S3 state, and SSM-related resources
+- curl
+- git
+- AWS permissions for VPC, EC2, IAM, S3 and Systems Manager
 
-## Pinned platform versions
-
-- K3s: `v1.36.4+k3s1`
-- Traefik Helm chart: `41.4.0`
-- Traefik Proxy: `v3.7.12`
-- cert-manager: `v1.21.1`
-- Argo CD Helm chart: `10.8.1`
-- Argo CD application: `v3.5.2`
-
-See [`VERSIONS.md`](VERSIONS.md) for the complete version matrix.
-
-## Deploy infrastructure
-
-### 1. Check AWS identity
+Verify tooling from the repository root:
 
 ```bash
+make check
 aws sts get-caller-identity
 ```
 
-### 2. Deploy VPC
+## Pinned versions
+
+- K3s `v1.36.4+k3s1`
+- Traefik Helm chart `41.4.0`
+- Traefik Proxy `v3.7.12`
+- cert-manager `v1.21.1`
+- Argo CD Helm chart `10.8.1`
+- Argo CD `v3.5.2`
+
+See [`VERSIONS.md`](VERSIONS.md) for the complete matrix.
+
+## Environment and region selection
+
+The command interface is parameterized:
 
 ```bash
-cd terragrunt/env/dev/region/us-east-1/vpc
-terragrunt backend bootstrap
-terragrunt init
-terragrunt plan
-terragrunt apply
+make plan ENV=dev REGION=us-east-1
 ```
 
-### 3. Deploy K3s
+`dev` and `us-east-1` are defaults, so for the current stack this is equivalent to:
 
 ```bash
-cd ../k3s
-terragrunt init
-terragrunt plan
-terragrunt apply
+make plan
 ```
 
-The Kubernetes API CIDR is discovered from `https://checkip.amazonaws.com` unless `TG_OPERATOR_CIDR` is set:
+No documentation or automation needs to know the physical depth of a Terragrunt unit.
+
+## Deploy infrastructure
+
+From the repository root:
+
+```bash
+make bootstrap ENV=dev REGION=us-east-1
+make init      ENV=dev REGION=us-east-1
+make plan      ENV=dev REGION=us-east-1
+make apply     ENV=dev REGION=us-east-1
+```
+
+The Kubernetes API defaults to the caller's current public `/32`. To use an office or VPN range:
 
 ```bash
 export TG_OPERATOR_CIDR="203.0.113.0/24"
-terragrunt plan
-terragrunt apply
+make plan ENV=dev REGION=us-east-1
+make apply ENV=dev REGION=us-east-1
 ```
 
-### Existing cluster warning
+### Existing deployments
 
-The K3s unit now sets `enable_traefik = false` because Traefik is installed separately with Helm. If an EC2 node already exists from the earlier configuration, **review the plan before applying**. The module uses `user_data_replace_on_change = true`, so changing bootstrap flags can replace the node.
+This refactor keeps the original S3 state-object naming convention so moving the live configuration does not intentionally orphan existing state. However, resource naming is now region-aware (`k3s-dev-us-east-1` rather than `k3s-dev`). If infrastructure already exists, review `make plan` before applying because name changes can replace resources, and the K3s module also uses `user_data_replace_on_change = true`.
 
-## Get kubeconfig without SSH
+## Retrieve kubeconfig
+
+Use the root-level helper; it discovers the selected stack and waits for the SSM command rather than using a fixed sleep:
 
 ```bash
-cd terragrunt/env/dev/region/us-east-1/k3s
+make kubeconfig ENV=dev REGION=us-east-1
+```
 
-INSTANCE_ID=$(terragrunt output -raw instance_id)
-PUBLIC_IP=$(terragrunt output -raw public_ip)
+Default output:
 
-CMD_ID=$(aws ssm send-command \
-  --instance-ids "$INSTANCE_ID" \
-  --document-name AWS-RunShellScript \
-  --parameters 'commands=["sudo cat /etc/rancher/k3s/k3s.yaml"]' \
-  --query 'Command.CommandId' \
-  --output text)
+```text
+~/.kube/k3s-dev-us-east-1.yaml
+```
 
-sleep 2
-mkdir -p ~/.kube
-aws ssm get-command-invocation \
-  --command-id "$CMD_ID" \
-  --instance-id "$INSTANCE_ID" \
-  --query 'StandardOutputContent' \
-  --output text \
-  | sed "s/127.0.0.1/$PUBLIC_IP/" \
-  > ~/.kube/k3s-dev.yaml
+Then:
 
-chmod 600 ~/.kube/k3s-dev.yaml
-export KUBECONFIG=~/.kube/k3s-dev.yaml
+```bash
+export KUBECONFIG=~/.kube/k3s-dev-us-east-1.yaml
 kubectl get nodes -o wide
+kubectl version
 ```
 
 ## Deploy the Kubernetes platform
 
-Install in this order:
-
-### 1. Traefik
+The supported order is Traefik -> cert-manager -> Argo CD.
 
 ```bash
-cd kubernetes/helm/traefik
-./install.sh
-./test.sh
+make platform-install
+make platform-test
 ```
 
-### 2. cert-manager
+The scripts call the component-local install/test scripts and fail on the first unsuccessful step.
 
-```bash
-cd ../cert-manager
-./install.sh
-./test.sh
-```
-
-### 3. Argo CD
-
-```bash
-cd ../argocd
-./install.sh
-```
-
-Full documentation:
+Detailed component documentation:
 
 - `kubernetes/helm/traefik/README.md`
 - `kubernetes/helm/cert-manager/README.md`
 - `kubernetes/helm/argocd/README.md`
 
-## Verify everything
+## Verify the platform
 
 ```bash
 kubectl get nodes -o wide
@@ -212,62 +187,42 @@ kubectl -n cert-manager get pods
 kubectl -n argocd get pods
 ```
 
-## Quick application test through Traefik
+## Infrastructure outputs and node access
 
 ```bash
-kubectl apply -f kubernetes/helm/traefik/examples/whoami.yaml
-kubectl -n traefik-test rollout status deployment/whoami
-
-PUBLIC_IP=$(cd terragrunt/env/dev/region/us-east-1/k3s && terragrunt output -raw public_ip)
-curl -H 'Host: whoami.local' "http://${PUBLIC_IP}/"
+make outputs ENV=dev REGION=us-east-1
+make ssm     ENV=dev REGION=us-east-1
 ```
 
-## Connect to the node with SSM
+There is no SSH ingress rule or EC2 key-pair dependency.
+
+## Component-specific planning
 
 ```bash
-cd terragrunt/env/dev/region/us-east-1/k3s
-aws ssm start-session --target "$(terragrunt output -raw instance_id)"
+make vpc-plan ENV=dev REGION=us-east-1
+make k3s-plan ENV=dev REGION=us-east-1
 ```
 
-No SSH security-group rule or EC2 key pair is required.
+The same interface works for another environment/region after its thin live units are added.
 
-## Change EC2 size
+## Destroy
 
-Edit `terragrunt/env/dev/region/us-east-1/k3s/terragrunt.hcl`:
+Remove Kubernetes add-ons in reverse order, then infrastructure:
 
-```hcl
-instance_type = "t3.medium"
+```bash
+make platform-uninstall
+make destroy ENV=dev REGION=us-east-1
 ```
 
-For a very small workload, `t3.small` may be enough. Traefik + cert-manager + Argo CD add control-plane workload, so `t3.medium` is the safer default.
+cert-manager CRDs are intentionally retained by its chart configuration; review cert-manager custom resources before deleting those CRDs manually.
 
 ## Security notes
 
 - Kubernetes API `6443` is restricted to `TG_OPERATOR_CIDR`.
-- SSH `22` is not opened; use SSM Session Manager.
+- SSH `22` is not exposed; use SSM.
 - IMDSv2 is required.
-- The root EBS volume is encrypted.
+- EBS is encrypted.
 - Traefik dashboard is not publicly exposed by default.
-- cert-manager Cloudflare examples contain placeholders only; never commit a real API token.
-- Do not commit kubeconfig or Terraform state.
-- For production, consider private subnets, a dedicated load balancer, external secrets, backup/restore, monitoring, and multiple EC2 nodes.
-
-## Destroy
-
-Remove Kubernetes platform components first:
-
-```bash
-cd kubernetes/helm/argocd && ./uninstall.sh
-cd ../cert-manager && ./uninstall.sh
-cd ../traefik && ./uninstall.sh
-```
-
-Then destroy infrastructure:
-
-```bash
-cd ../../../terragrunt/env/dev/region/us-east-1/k3s
-terragrunt destroy
-
-cd ../vpc
-terragrunt destroy
-```
+- Cloudflare examples contain placeholders only; never commit a real token.
+- Never commit kubeconfig, Terraform state, cloud credentials, or private keys.
+- For production, add multi-node failure domains, private subnets, backup/restore, observability, secret management and a production load-balancing strategy.

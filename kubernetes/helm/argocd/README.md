@@ -1,6 +1,6 @@
 # Argo CD on K3s with Helm
 
-This directory deploys Argo CD using the **official `argo-cd` Helm chart** as a pinned dependency.
+This directory deploys Argo CD using the official `argo-cd` Helm chart as a pinned dependency.
 
 ## Pinned versions
 
@@ -13,22 +13,21 @@ This directory deploys Argo CD using the **official `argo-cd` Helm chart** as a 
 | Argo CD application | `v3.5.2` |
 | Local wrapper chart | `1.0.0` |
 
-`Chart.yaml` is the source of truth for the Argo CD chart/application versions. The K3s version is pinned in `terragrunt/env/dev/region/us-east-1/k3s/terragrunt.hcl`.
+`Chart.yaml` is the source of truth for Argo CD versions. K3s is pinned once in `infrastructure/live/_common/k3s.hcl`; environment/region leaf units consume that shared configuration.
 
 ## Prerequisites
 
-Make sure your kubeconfig points to the K3s cluster and that the Helm-managed Traefik controller is installed first:
+From the repository root:
 
 ```bash
-export KUBECONFIG=~/.kube/k3s-dev.yaml
+make kubeconfig ENV=dev REGION=us-east-1
+export KUBECONFIG=~/.kube/k3s-dev-us-east-1.yaml
 kubectl get nodes -o wide
-kubectl version
-helm version
 kubectl -n traefik get pods,svc
 kubectl get ingressclass traefik
 ```
 
-## Validate chart versions before deployment
+## Validate the wrapper chart
 
 ```bash
 cd kubernetes/helm/argocd
@@ -37,6 +36,8 @@ grep -E '^(version|appVersion):' Chart.yaml
 grep -A4 '^dependencies:' Chart.yaml
 helm dependency update .
 helm dependency list .
+helm lint . --values values.yaml
+helm template argocd . --namespace argocd --values values.yaml >/tmp/argocd-rendered.yaml
 ```
 
 Expected dependency:
@@ -45,25 +46,25 @@ Expected dependency:
 argo-cd  10.8.1  https://argoproj.github.io/argo-helm
 ```
 
-## Install Argo CD
+## Install
 
-Recommended scripted deployment:
+From the repository root, the preferred path is:
 
 ```bash
+make platform-install
+```
+
+For Argo CD only:
+
+```bash
+cd kubernetes/helm/argocd
 ./install.sh
 ```
 
-Equivalent manual commands:
+Equivalent Helm command:
 
 ```bash
 helm dependency update .
-helm lint . --values values.yaml
-
-helm template argocd . \
-  --namespace argocd \
-  --values values.yaml \
-  >/tmp/argocd-rendered.yaml
-
 helm upgrade --install argocd . \
   --namespace argocd \
   --create-namespace \
@@ -72,7 +73,7 @@ helm upgrade --install argocd . \
   --timeout 10m
 ```
 
-Verify:
+## Verify
 
 ```bash
 helm -n argocd list
@@ -82,43 +83,29 @@ kubectl -n argocd get deployments,statefulsets,services
 kubectl -n argocd rollout status deployment/argocd-server --timeout=5m
 ```
 
-## Access the UI locally
+## Local UI access
 
-The default values intentionally do **not** expose Argo CD publicly. Use port-forwarding first:
+The baseline does not expose Argo CD publicly:
 
 ```bash
 kubectl -n argocd port-forward svc/argocd-server 8080:80
 ```
 
-Open `http://localhost:8080`.
-
-Get the generated initial administrator password:
+Retrieve the initial password:
 
 ```bash
 kubectl -n argocd get secret argocd-initial-admin-secret \
   -o jsonpath='{.data.password}' | base64 -d; echo
 ```
 
-Username:
+Username: `admin`.
 
-```text
-admin
-```
+## Optional Traefik ingress
 
-After you configure a permanent login/SSO method, remove the initial admin secret if your security policy requires it.
-
-## Optional public access through Traefik
-
-1. Point a DNS record such as `argocd.example.com` to the EC2 Elastic IP.
-2. Copy the example override and replace the hostname:
+Point a DNS name at the EC2 Elastic IP, copy the example override and set the hostname:
 
 ```bash
 cp values-traefik.example.yaml values-traefik.yaml
-```
-
-3. Deploy with both files:
-
-```bash
 helm upgrade --install argocd . \
   --namespace argocd \
   --create-namespace \
@@ -128,7 +115,7 @@ helm upgrade --install argocd . \
   --timeout 10m
 ```
 
-Check the ingress and the Helm-managed Traefik controller:
+Verify:
 
 ```bash
 kubectl -n argocd get ingress
@@ -136,19 +123,17 @@ kubectl -n traefik get pods,svc
 kubectl get ingressclass traefik
 ```
 
-For Internet-facing usage, configure TLS with cert-manager rather than leaving HTTP enabled.
+For Internet-facing use, configure TLS with cert-manager rather than leaving HTTP enabled.
 
-## Upgrade later
-
-Do not use an unpinned `latest` chart in production. To upgrade intentionally:
+## Upgrade
 
 ```bash
 helm repo add argo https://argoproj.github.io/argo-helm
 helm repo update
-helm search repo argo/argo-cd --versions | head
+helm search repo argo/argo-cd --versions | head -20
 ```
 
-Then update the dependency `version` and `appVersion` in `Chart.yaml`, run:
+Update `Chart.yaml` and `VERSIONS.md` intentionally, then:
 
 ```bash
 helm dependency update .
@@ -156,8 +141,6 @@ helm lint . --values values.yaml
 helm template argocd . --namespace argocd --values values.yaml >/dev/null
 helm upgrade --install argocd . --namespace argocd --values values.yaml --wait --timeout 10m
 ```
-
-Commit the version change so the deployed version remains auditable.
 
 ## Uninstall
 
