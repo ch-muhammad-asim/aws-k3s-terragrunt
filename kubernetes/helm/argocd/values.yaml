@@ -1,12 +1,13 @@
 # Argo CD Helm chart: 10.8.1
 # Argo CD application: v3.5.2
 # K3s target: v1.36.4+k3s1
+# Traefik Helm chart: 41.4.0 (Traefik Proxy v3.7.12)
 #
 # This file configures the dependency alias "argocd" declared in Chart.yaml.
 argocd:
   # For a single-node K3s cluster we keep the deployment non-HA.
   # The official chart defaults are also non-HA; these values only customize
-  # access through the bundled K3s Traefik ingress controller.
+  # access through the separately Helm-managed Traefik ingress controller.
   configs:
     params:
       # Traefik terminates HTTP/TLS at the ingress layer when ingress is enabled.

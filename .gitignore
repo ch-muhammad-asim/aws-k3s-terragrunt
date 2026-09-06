@@ -23,5 +23,8 @@ kubeconfig*
 .vscode/
 
 # Helm dependency/build artifacts and local environment overrides
-kubernetes/helm/argocd/charts/
+kubernetes/helm/*/charts/
+kubernetes/helm/*/*.tgz
 kubernetes/helm/argocd/values-traefik.yaml
+kubernetes/helm/traefik/values-local.yaml
+kubernetes/helm/cert-manager/values-local.yaml

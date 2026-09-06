@@ -45,5 +45,8 @@ inputs = {
   api_allowed_cidrs     = [local.operator_cidr]
   ingress_allowed_cidrs = ["0.0.0.0/0"]
 
-  enable_traefik = true
+  # We install a separately pinned Traefik Helm chart from kubernetes/helm/traefik.
+  # Disable the K3s-bundled Traefik to avoid duplicate controllers, Services,
+  # IngressClasses, and port 80/443 conflicts.
+  enable_traefik = false
 }

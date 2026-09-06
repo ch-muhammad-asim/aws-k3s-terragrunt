@@ -1,6 +1,6 @@
 # AWS EC2 K3s with Terraform + Terragrunt
 
-A clean, cost-conscious single-node K3s deployment on AWS EC2. This repository intentionally contains **no Hermes agent, Bedrock IAM, model configuration, or application manifests**.
+A clean, cost-conscious single-node K3s deployment on AWS EC2 with version-pinned Traefik, cert-manager, and Argo CD Helm deployments. This repository intentionally contains **no Hermes agent, Bedrock IAM, model configuration, or application manifests**.
 
 ## Architecture
 
@@ -14,7 +14,11 @@ A clean, cost-conscious single-node K3s deployment on AWS EC2. This repository i
   - TCP 80/443 from configurable ingress CIDRs
   - no inbound SSH
 - AWS Systems Manager (SSM) for shell access
-- K3s default Traefik ingress controller enabled by default
+- K3s bundled Traefik **disabled**
+- Helm-managed Traefik ingress controller
+- K3s ServiceLB used for the Traefik `LoadBalancer` Service
+- cert-manager for certificate lifecycle / Let's Encrypt
+- Argo CD for GitOps
 - K3s local-path storage enabled by default
 - S3 Terraform state via Terragrunt
 
@@ -27,6 +31,30 @@ A clean, cost-conscious single-node K3s deployment on AWS EC2. This repository i
 ├── VERSIONS.md
 ├── kubernetes/
 │   └── helm/
+│       ├── README.md
+│       ├── traefik/
+│       │   ├── Chart.yaml
+│       │   ├── values.yaml
+│       │   ├── values-https-redirect.example.yaml
+│       │   ├── install.sh
+│       │   ├── test.sh
+│       │   ├── uninstall.sh
+│       │   ├── examples/whoami.yaml
+│       │   └── README.md
+│       ├── cert-manager/
+│       │   ├── Chart.yaml
+│       │   ├── values.yaml
+│       │   ├── install.sh
+│       │   ├── test.sh
+│       │   ├── uninstall.sh
+│       │   ├── examples/
+│       │   │   ├── selfsigned-smoke-test.yaml
+│       │   │   ├── cloudflare-secret.example.yaml
+│       │   │   ├── clusterissuer-staging.example.yaml
+│       │   │   ├── clusterissuer-production.example.yaml
+│       │   │   ├── certificate.example.yaml
+│       │   │   └── ingress-tls.example.yaml
+│       │   └── README.md
 │       └── argocd/
 │           ├── Chart.yaml
 │           ├── values.yaml
@@ -51,26 +79,31 @@ A clean, cost-conscious single-node K3s deployment on AWS EC2. This repository i
 - AWS CLI authenticated to the target AWS account
 - Terraform >= 1.8
 - Terragrunt 1.x
+- Helm 3
+- kubectl
+- `curl`
 - permissions to create VPC, EC2, IAM, S3 state, and SSM-related resources
-- `curl` installed locally (used by Terragrunt to discover your public /32 for the Kubernetes API)
 
 ## Pinned platform versions
 
 - K3s: `v1.36.4+k3s1`
+- Traefik Helm chart: `41.4.0`
+- Traefik Proxy: `v3.7.12`
+- cert-manager: `v1.21.1`
 - Argo CD Helm chart: `10.8.1`
 - Argo CD application: `v3.5.2`
 
-See [`VERSIONS.md`](VERSIONS.md) for the complete version matrix. The K3s version is pinned directly in the Terragrunt K3s unit; the install no longer follows a moving `stable` channel.
+See [`VERSIONS.md`](VERSIONS.md) for the complete version matrix.
 
-## Deploy
+## Deploy infrastructure
 
-### 1. Check your AWS identity
+### 1. Check AWS identity
 
 ```bash
 aws sts get-caller-identity
 ```
 
-### 2. Deploy the VPC
+### 2. Deploy VPC
 
 ```bash
 cd terragrunt/env/dev/region/us-east-1/vpc
@@ -89,9 +122,7 @@ terragrunt plan
 terragrunt apply
 ```
 
-By default, the Kubernetes API CIDR is discovered from `https://checkip.amazonaws.com` at Terragrunt evaluation time.
-
-To use a fixed office/VPN CIDR instead:
+The Kubernetes API CIDR is discovered from `https://checkip.amazonaws.com` unless `TG_OPERATOR_CIDR` is set:
 
 ```bash
 export TG_OPERATOR_CIDR="203.0.113.0/24"
@@ -99,9 +130,11 @@ terragrunt plan
 terragrunt apply
 ```
 
-## Get kubeconfig without SSH
+### Existing cluster warning
 
-After the instance finishes bootstrapping:
+The K3s unit now sets `enable_traefik = false` because Traefik is installed separately with Helm. If an EC2 node already exists from the earlier configuration, **review the plan before applying**. The module uses `user_data_replace_on_change = true`, so changing bootstrap flags can replace the node.
+
+## Get kubeconfig without SSH
 
 ```bash
 cd terragrunt/env/dev/region/us-east-1/k3s
@@ -131,88 +164,108 @@ export KUBECONFIG=~/.kube/k3s-dev.yaml
 kubectl get nodes -o wide
 ```
 
-If SSM has not registered the instance yet, wait a minute and retry.
+## Deploy the Kubernetes platform
+
+Install in this order:
+
+### 1. Traefik
+
+```bash
+cd kubernetes/helm/traefik
+./install.sh
+./test.sh
+```
+
+### 2. cert-manager
+
+```bash
+cd ../cert-manager
+./install.sh
+./test.sh
+```
+
+### 3. Argo CD
+
+```bash
+cd ../argocd
+./install.sh
+```
+
+Full documentation:
+
+- `kubernetes/helm/traefik/README.md`
+- `kubernetes/helm/cert-manager/README.md`
+- `kubernetes/helm/argocd/README.md`
+
+## Verify everything
+
+```bash
+kubectl get nodes -o wide
+kubectl get ingressclass
+
+helm -n traefik list
+helm -n cert-manager list
+helm -n argocd list
+
+kubectl -n traefik get pods,svc
+kubectl -n cert-manager get pods
+kubectl -n argocd get pods
+```
+
+## Quick application test through Traefik
+
+```bash
+kubectl apply -f kubernetes/helm/traefik/examples/whoami.yaml
+kubectl -n traefik-test rollout status deployment/whoami
+
+PUBLIC_IP=$(cd terragrunt/env/dev/region/us-east-1/k3s && terragrunt output -raw public_ip)
+curl -H 'Host: whoami.local' "http://${PUBLIC_IP}/"
+```
 
 ## Connect to the node with SSM
 
 ```bash
+cd terragrunt/env/dev/region/us-east-1/k3s
 aws ssm start-session --target "$(terragrunt output -raw instance_id)"
 ```
 
 No SSH security-group rule or EC2 key pair is required.
 
-## Deploy a quick test application
-
-```bash
-export KUBECONFIG=~/.kube/k3s-dev.yaml
-
-kubectl create deployment nginx --image=nginx:alpine
-kubectl expose deployment nginx --port=80
-
-cat <<'YAML' | kubectl apply -f -
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: nginx
-spec:
-  rules:
-    - http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: nginx
-                port:
-                  number: 80
-YAML
-
-PUBLIC_IP=$(terragrunt output -raw public_ip)
-curl "http://$PUBLIC_IP"
-```
-
-## Install Argo CD
-
-After K3s is reachable with `kubectl`, deploy the pinned Argo CD Helm chart:
-
-```bash
-cd kubernetes/helm/argocd
-./install.sh
-```
-
-The wrapper chart pins Argo CD Helm chart `10.8.1` and Argo CD `v3.5.2`. For the full validation, manual install, Traefik ingress, password retrieval, upgrade, and uninstall commands, see `kubernetes/helm/argocd/README.md`.
-
 ## Change EC2 size
 
-Edit:
-
-```text
-terragrunt/env/dev/region/us-east-1/k3s/terragrunt.hcl
-```
-
-For example:
+Edit `terragrunt/env/dev/region/us-east-1/k3s/terragrunt.hcl`:
 
 ```hcl
 instance_type = "t3.medium"
 ```
 
-For a very small workload, `t3.small` may be enough. For more application pods, use `t3.medium` or larger.
+For a very small workload, `t3.small` may be enough. Traefik + cert-manager + Argo CD add control-plane workload, so `t3.medium` is the safer default.
 
 ## Security notes
 
-- Kubernetes API `6443` is not open to the internet by default; it is restricted to `TG_OPERATOR_CIDR`.
+- Kubernetes API `6443` is restricted to `TG_OPERATOR_CIDR`.
 - SSH `22` is not opened; use SSM Session Manager.
 - IMDSv2 is required.
 - The root EBS volume is encrypted.
+- Traefik dashboard is not publicly exposed by default.
+- cert-manager Cloudflare examples contain placeholders only; never commit a real API token.
 - Do not commit kubeconfig or Terraform state.
-- For production, consider private subnets, a load balancer, external secrets, backup/restore, monitoring, and multiple EC2 nodes.
+- For production, consider private subnets, a dedicated load balancer, external secrets, backup/restore, monitoring, and multiple EC2 nodes.
 
 ## Destroy
 
-Destroy K3s first, then the VPC:
+Remove Kubernetes platform components first:
 
 ```bash
-cd terragrunt/env/dev/region/us-east-1/k3s
+cd kubernetes/helm/argocd && ./uninstall.sh
+cd ../cert-manager && ./uninstall.sh
+cd ../traefik && ./uninstall.sh
+```
+
+Then destroy infrastructure:
+
+```bash
+cd ../../../terragrunt/env/dev/region/us-east-1/k3s
 terragrunt destroy
 
 cd ../vpc

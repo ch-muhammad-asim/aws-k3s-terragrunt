@@ -7,6 +7,8 @@ This directory deploys Argo CD using the **official `argo-cd` Helm chart** as a 
 | Component | Version |
 |---|---:|
 | K3s target | `v1.36.4+k3s1` |
+| Traefik Helm chart | `41.4.0` |
+| Traefik Proxy | `v3.7.12` |
 | Argo CD Helm chart | `10.8.1` |
 | Argo CD application | `v3.5.2` |
 | Local wrapper chart | `1.0.0` |
@@ -15,13 +17,15 @@ This directory deploys Argo CD using the **official `argo-cd` Helm chart** as a 
 
 ## Prerequisites
 
-Make sure your kubeconfig points to the K3s cluster:
+Make sure your kubeconfig points to the K3s cluster and that the Helm-managed Traefik controller is installed first:
 
 ```bash
 export KUBECONFIG=~/.kube/k3s-dev.yaml
 kubectl get nodes -o wide
 kubectl version
 helm version
+kubectl -n traefik get pods,svc
+kubectl get ingressclass traefik
 ```
 
 ## Validate chart versions before deployment
@@ -53,6 +57,7 @@ Equivalent manual commands:
 
 ```bash
 helm dependency update .
+helm lint . --values values.yaml
 
 helm template argocd . \
   --namespace argocd \
@@ -71,6 +76,7 @@ Verify:
 
 ```bash
 helm -n argocd list
+helm -n argocd get metadata argocd
 kubectl -n argocd get pods -o wide
 kubectl -n argocd get deployments,statefulsets,services
 kubectl -n argocd rollout status deployment/argocd-server --timeout=5m
@@ -101,7 +107,7 @@ admin
 
 After you configure a permanent login/SSO method, remove the initial admin secret if your security policy requires it.
 
-## Optional public access through K3s Traefik
+## Optional public access through Traefik
 
 1. Point a DNS record such as `argocd.example.com` to the EC2 Elastic IP.
 2. Copy the example override and replace the hostname:
@@ -122,14 +128,15 @@ helm upgrade --install argocd . \
   --timeout 10m
 ```
 
-Check the ingress:
+Check the ingress and the Helm-managed Traefik controller:
 
 ```bash
 kubectl -n argocd get ingress
-kubectl -n kube-system get pods -l app.kubernetes.io/name=traefik
+kubectl -n traefik get pods,svc
+kubectl get ingressclass traefik
 ```
 
-For Internet-facing production usage, add TLS (for example with cert-manager) instead of leaving HTTP enabled.
+For Internet-facing usage, configure TLS with cert-manager rather than leaving HTTP enabled.
 
 ## Upgrade later
 
@@ -145,6 +152,7 @@ Then update the dependency `version` and `appVersion` in `Chart.yaml`, run:
 
 ```bash
 helm dependency update .
+helm lint . --values values.yaml
 helm template argocd . --namespace argocd --values values.yaml >/dev/null
 helm upgrade --install argocd . --namespace argocd --values values.yaml --wait --timeout 10m
 ```
