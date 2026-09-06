@@ -27,7 +27,7 @@ The current topology is intentionally single-node and is not node-level HA. The 
 ├── README.md
 ├── VERSIONS.md
 ├── docs/
-│   └── repository-layout.md
+│   └── README.md
 ├── infrastructure/
 │   ├── modules/
 │   │   ├── vpc/
@@ -63,7 +63,7 @@ The current topology is intentionally single-node and is not node-level HA. The 
 - operators and CI run the same root-level `make` interface rather than hard-coding deep paths.
 - remote-state identity is derived from environment, region and component rather than repository depth, so this directory refactor preserves the original backend keys.
 
-See [`docs/repository-layout.md`](docs/repository-layout.md) for the scaling model.
+See [`docs/README.md`](docs/README.md) for the scaling model.
 
 ## Prerequisites
 
