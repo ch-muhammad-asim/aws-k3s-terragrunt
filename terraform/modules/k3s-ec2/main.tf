@@ -130,7 +130,7 @@ resource "aws_instance" "node" {
   user_data_replace_on_change = true
   user_data = templatefile("${path.module}/user_data.sh.tftpl", {
     cluster_name = var.cluster_name
-    k3s_channel  = var.k3s_channel
+    k3s_version  = var.k3s_version
     public_ip    = aws_eip.this.public_ip
     traefik_flag = local.traefik_flag
   })

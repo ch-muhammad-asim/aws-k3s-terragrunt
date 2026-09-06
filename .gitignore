@@ -21,3 +21,7 @@ kubeconfig*
 .DS_Store
 .idea/
 .vscode/
+
+# Helm dependency/build artifacts and local environment overrides
+kubernetes/helm/argocd/charts/
+kubernetes/helm/argocd/values-traefik.yaml

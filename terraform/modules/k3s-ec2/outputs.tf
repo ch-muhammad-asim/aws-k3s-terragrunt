@@ -27,3 +27,8 @@ output "ssm_session_command" {
   description = "Command for opening an SSM shell session."
   value       = "aws ssm start-session --target ${aws_instance.node.id}"
 }
+
+output "k3s_version" {
+  description = "Exact K3s version configured for installation."
+  value       = var.k3s_version
+}

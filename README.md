@@ -24,6 +24,16 @@ A clean, cost-conscious single-node K3s deployment on AWS EC2. This repository i
 
 ```text
 .
+├── VERSIONS.md
+├── kubernetes/
+│   └── helm/
+│       └── argocd/
+│           ├── Chart.yaml
+│           ├── values.yaml
+│           ├── values-traefik.example.yaml
+│           ├── install.sh
+│           ├── uninstall.sh
+│           └── README.md
 ├── terraform/
 │   └── modules/
 │       ├── vpc/
@@ -43,6 +53,14 @@ A clean, cost-conscious single-node K3s deployment on AWS EC2. This repository i
 - Terragrunt 1.x
 - permissions to create VPC, EC2, IAM, S3 state, and SSM-related resources
 - `curl` installed locally (used by Terragrunt to discover your public /32 for the Kubernetes API)
+
+## Pinned platform versions
+
+- K3s: `v1.36.4+k3s1`
+- Argo CD Helm chart: `10.8.1`
+- Argo CD application: `v3.5.2`
+
+See [`VERSIONS.md`](VERSIONS.md) for the complete version matrix. The K3s version is pinned directly in the Terragrunt K3s unit; the install no longer follows a moving `stable` channel.
 
 ## Deploy
 
@@ -152,6 +170,17 @@ YAML
 PUBLIC_IP=$(terragrunt output -raw public_ip)
 curl "http://$PUBLIC_IP"
 ```
+
+## Install Argo CD
+
+After K3s is reachable with `kubectl`, deploy the pinned Argo CD Helm chart:
+
+```bash
+cd kubernetes/helm/argocd
+./install.sh
+```
+
+The wrapper chart pins Argo CD Helm chart `10.8.1` and Argo CD `v3.5.2`. For the full validation, manual install, Traefik ingress, password retrieval, upgrade, and uninstall commands, see `kubernetes/helm/argocd/README.md`.
 
 ## Change EC2 size
 

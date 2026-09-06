@@ -1,0 +1,25 @@
+# Argo CD Helm chart: 10.8.1
+# Argo CD application: v3.5.2
+# K3s target: v1.36.4+k3s1
+#
+# This file configures the dependency alias "argocd" declared in Chart.yaml.
+argocd:
+  # For a single-node K3s cluster we keep the deployment non-HA.
+  # The official chart defaults are also non-HA; these values only customize
+  # access through the bundled K3s Traefik ingress controller.
+  configs:
+    params:
+      # Traefik terminates HTTP/TLS at the ingress layer when ingress is enabled.
+      # Keeping the Argo CD server HTTP internally avoids double TLS termination.
+      server.insecure: true
+
+  server:
+    service:
+      type: ClusterIP
+
+    ingress:
+      # Disabled by default because a real DNS hostname/certificate is environment-specific.
+      # Use values-traefik.example.yaml after replacing the hostname.
+      enabled: false
+      controller: generic
+      ingressClassName: traefik

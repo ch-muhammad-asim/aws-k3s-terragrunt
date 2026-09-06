@@ -35,10 +35,14 @@ variable "root_volume_size" {
   default     = 30
 }
 
-variable "k3s_channel" {
-  description = "K3s install channel, for example stable or latest."
+variable "k3s_version" {
+  description = "Exact K3s release to install. Pin this for reproducible deployments, for example v1.36.4+k3s1."
   type        = string
-  default     = "stable"
+
+  validation {
+    condition     = can(regex("^v[0-9]+\\.[0-9]+\\.[0-9]+\\+k3s[0-9]+$", var.k3s_version))
+    error_message = "k3s_version must be an exact K3s release such as v1.36.4+k3s1."
+  }
 }
 
 variable "api_allowed_cidrs" {

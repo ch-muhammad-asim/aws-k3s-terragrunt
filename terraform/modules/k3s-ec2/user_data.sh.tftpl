@@ -9,7 +9,7 @@ dnf install -y curl jq
 systemctl enable --now amazon-ssm-agent || true
 
 curl -sfL https://get.k3s.io | \
-  INSTALL_K3S_CHANNEL="${k3s_channel}" \
+  INSTALL_K3S_VERSION="${k3s_version}" \
   sh -s - server \
     --node-name "${cluster_name}" \
     --tls-san "${public_ip}" \

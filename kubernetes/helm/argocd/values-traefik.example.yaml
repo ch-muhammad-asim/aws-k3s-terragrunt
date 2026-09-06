@@ -1,0 +1,10 @@
+# Optional Traefik ingress override.
+# Replace argocd.example.com with a DNS name resolving to the EC2 Elastic IP.
+argocd:
+  server:
+    ingress:
+      enabled: true
+      controller: generic
+      ingressClassName: traefik
+      hostname: argocd.example.com
+      tls: false

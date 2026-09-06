@@ -23,6 +23,10 @@ locals {
     "TG_OPERATOR_CIDR",
     "${trimspace(run_cmd("--terragrunt-quiet", "curl", "-fsS", "https://checkip.amazonaws.com"))}/32",
   )
+
+  # Pinned exact release for reproducible builds.
+  # Verified against the upstream K3s latest release on 2026-09-06.
+  k3s_version = "v1.36.4+k3s1"
 }
 
 inputs = {
@@ -32,7 +36,11 @@ inputs = {
 
   instance_type    = "t3.medium"
   root_volume_size = 30
-  k3s_channel      = "stable"
+
+  # IMPORTANT: exact K3s version installed by user_data.sh.tftpl.
+  # Do not replace this with the moving "stable"/"latest" channel if you want
+  # identical rebuilds.
+  k3s_version = local.k3s_version
 
   api_allowed_cidrs     = [local.operator_cidr]
   ingress_allowed_cidrs = ["0.0.0.0/0"]
