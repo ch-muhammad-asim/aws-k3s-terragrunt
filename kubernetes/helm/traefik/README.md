@@ -14,6 +14,31 @@ This directory replaces K3s-bundled Traefik with the official Traefik Helm chart
 
 K3s configuration is centralized in `infrastructure/live/_common/k3s.hcl`, where bundled Traefik is disabled. Environment-specific leaves do not duplicate this platform setting.
 
+## Resource/runtime baseline
+
+The Traefik dependency is configured under the `traefik:` key in `values.yaml` because this repository uses a local wrapper chart. The baseline is:
+
+```yaml
+traefik:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: null
+      memory: 512Mi
+
+  env:
+    - name: GOMAXPROCS
+      value: "2"
+```
+
+The CPU request remains `100m` for scheduling and bin packing, while the CPU limit is removed so Traefik can burst when node capacity is available. The memory request remains `128Mi` and the hard memory limit is `512Mi`. `GOMAXPROCS=2` controls Go execution parallelism; it does not reserve two CPUs.
+
+Traefik chart `41.4.0` defaults `deployment.goMemLimitPercentage` to `0.9`. With the `512Mi` memory limit set, the chart derives `GOMEMLIMIT` from that limit. No separate `GOMEMLIMIT` override is required here.
+
+Validate the `512Mi` ceiling against representative peak traffic and monitor memory, OOM kills, restarts, p95/p99 latency, and autoscaler behavior before using the baseline for a larger production workload.
+
 ## Prerequisites
 
 From the repository root:
@@ -55,6 +80,8 @@ Expected dependency:
 ```text
 traefik  41.4.0  https://traefik.github.io/charts
 ```
+
+Inspect `/tmp/traefik-rendered.yaml` and confirm the Traefik container has no CPU limit, a `512Mi` memory limit, requests of `100m` CPU and `128Mi` memory, and `GOMAXPROCS="2"`.
 
 ## Install
 
