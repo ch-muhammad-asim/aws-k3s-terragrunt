@@ -2,6 +2,12 @@
 
 The repository separates AWS networking, EC2 compute, K3s configuration, and Kubernetes add-ons into independent lifecycle boundaries.
 
+## Architecture guides
+
+- [`k3s/README.md`](k3s/README.md) - K3s topology and deployment guidance.
+- [`k3s/architecture.md`](k3s/architecture.md) - GitHub-rendered Mermaid diagrams for single-node, multi-node, HA and single-host lab topologies.
+- [`k3s/kubeadm-comparison.md`](k3s/kubeadm-comparison.md) - K3s vs kubeadm decision matrix for single-node, multi-node, HA and non-HA deployments.
+
 ```text
 infrastructure/
 ├── modules/
