@@ -5,6 +5,7 @@ The repository separates AWS networking, EC2 compute, K3s configuration, and Kub
 ## Architecture and research guides
 
 - [`k3s-vs-kubeadm/README.md`](k3s-vs-kubeadm/README.md) - **canonical K3s vs kubeadm research guide**, including single-node, multi-node, HA/non-HA decisions, native K3s, K3s inside Docker, k3d, security, networking, storage, and human-readable architecture explanations.
+- [`k3s-vs-kubeadm/open-source-kubernetes-landscape.md`](k3s-vs-kubeadm/open-source-kubernetes-landscape.md) - explains which projects are open-source Kubernetes distributions versus an OS, bootstrap tool, or development tool; includes K3s, RKE2, k0s, MicroK8s, Talos Linux, kubeadm, k3d, licensing, and production-fit guidance.
 - [`k3s-vs-kubeadm/architecture.svg`](k3s-vs-kubeadm/architecture.svg) - visual comparison of native K3s, K3s-in-Docker/k3d, and kubeadm.
 - [`k3s/README.md`](k3s/README.md) - K3s topology and deployment guidance for this repository.
 - [`k3s/architecture.md`](k3s/architecture.md) - GitHub-rendered diagrams for single-node, multi-node, HA and single-host lab topologies.
