@@ -1,11 +1,18 @@
 # K3s architecture and deployment guidance
 
-This section documents the recommended K3s topologies for this repository and when K3s is a better fit than kubeadm.
+This section documents the recommended K3s topologies for this repository and the research-backed decision points for choosing K3s, kubeadm, or a simpler container runtime workflow.
+
+## Current platform architecture
+
+![K3s on AWS platform architecture](../diagrams/k3s-platform-overview.svg)
+
+The rendered SVG above represents the repository's current single-node AWS profile. Detailed topology diagrams and the K3s vs kubeadm research are maintained separately so the operational decision record stays reviewable and version-controlled.
 
 ## Documents
 
-- [`architecture.md`](architecture.md) - single-node, multi-node non-HA, multi-node HA, and single-physical-host lab diagrams.
-- [`kubeadm-comparison.md`](kubeadm-comparison.md) - K3s vs kubeadm decision matrix and recommendations.
+- [`architecture.md`](architecture.md) - single-node, multi-node non-HA, multi-node HA, external-datastore HA, and single-physical-host lab topologies.
+- [`kubeadm-comparison.md`](kubeadm-comparison.md) - K3s vs kubeadm decision matrix, trade-offs, and scenario recommendations.
+- [`../diagrams/`](../diagrams/) - rendered architecture assets used by GitHub documentation.
 
 ## Repository position
 
