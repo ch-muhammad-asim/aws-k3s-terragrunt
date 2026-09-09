@@ -4,6 +4,8 @@ A version-pinned K3s platform on AWS with clear lifecycle boundaries between net
 
 ## Architecture
 
+![K3s on AWS platform architecture](docs/diagrams/k3s-platform-overview.svg)
+
 ```text
 VPC -> EC2 -> K3s -> Traefik -> cert-manager -> Argo CD
 ```
@@ -17,6 +19,8 @@ VPC -> EC2 -> K3s -> Traefik -> cert-manager -> Argo CD
 
 The current compute profile is a single EC2 K3s server/worker to keep the initial deployment cost-conscious. It is not node-level HA; the module/state separation is designed so the topology can evolve without coupling K3s lifecycle to one EC2 resource definition.
 
+For K3s topology guidance and the K3s vs kubeadm research/decision matrix, see [`docs/k3s/`](docs/k3s/).
+
 ## Repository layout
 
 ```text
@@ -25,7 +29,13 @@ The current compute profile is a single EC2 K3s server/worker to keep the initia
 ├── README.md
 ├── VERSIONS.md
 ├── docs/
-│   └── README.md
+│   ├── README.md
+│   ├── diagrams/
+│   │   └── k3s-platform-overview.svg
+│   └── k3s/
+│       ├── README.md
+│       ├── architecture.md
+│       └── kubeadm-comparison.md
 ├── infrastructure/
 │   ├── modules/
 │   │   ├── vpc/
