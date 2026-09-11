@@ -16,17 +16,15 @@ dependency "ec2" {
   config_path = "${local.region_dir}/ec2"
 
   mock_outputs = {
-    instance_id   = "i-00000000000000000"
-    public_ip     = "203.0.113.10"
-    iam_role_name = "mock-k3s-node-role"
+    instance_id = "i-00000000000000000"
+    public_ip   = "203.0.113.10"
   }
 
   mock_outputs_allowed_terraform_commands = ["validate", "plan", "init"]
 }
 
 inputs = {
-  cluster_name       = include.root.locals.cluster_name
-  instance_id        = dependency.ec2.outputs.instance_id
-  instance_role_name = dependency.ec2.outputs.iam_role_name
-  public_ip          = dependency.ec2.outputs.public_ip
+  cluster_name = include.root.locals.cluster_name
+  instance_id  = dependency.ec2.outputs.instance_id
+  public_ip    = dependency.ec2.outputs.public_ip
 }

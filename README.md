@@ -32,10 +32,10 @@ Argo CD
 Every box is an independent Terragrunt unit with its own Terraform state. Terragrunt dependency blocks define the order.
 
 - `vpc` owns AWS networking.
-- `ec2` owns EC2, EIP, IAM/SSM, security groups and EBS. EC2 instances and their EIPs are created from a map with Terraform `for_each` so additional nodes have stable key-based resource addresses.
-- `k3s` installs/upgrades K3s through AWS Systems Manager without replacing EC2.
+- `ec2` owns EC2, EIP, IAM/SSM, security groups and EBS. EC2 instances and their EIPs are created from a map with Terraform `for_each` so additional nodes have stable key-based resource addresses. It also renders the node bootstrap and delivers it as EC2 user data.
+- `k3s` retrieves the resulting kubeconfig onto the machine running Terragrunt and exposes the client material to the Helm units. It does not install anything itself.
 - `traefik`, `cert-manager` and `argocd` use a reusable Terraform `helm_release` module, but are planned/applied/destroyed through Terragrunt.
-- K3s publishes the Kubernetes API/client material to scoped SSM Parameter Store keys. Downstream Terragrunt units consume the resulting K3s outputs, so no kubeconfig bootstrap script is required for deployment.
+- K3s is installed by cloud-init on first boot, so there is no Run Command association to converge and no SSH access anywhere in the workflow. Downstream Terragrunt units consume the K3s unit's outputs, so no kubeconfig bootstrap step is required for deployment.
 
 The current compute profile is a single EC2 K3s server/worker. It is intentionally non-HA; the module/state boundaries and map-driven EC2 model allow later evolution toward multi-node HA.
 
@@ -58,6 +58,8 @@ The current compute profile is a single EC2 K3s server/worker. It is intentional
 │   │   ├── ec2/
 │   │   ├── k3s/
 │   │   └── helm-release/
+│   ├── templates/
+│   │   └── k3s-install.sh.tftpl
 │   └── live/
 │       ├── root.hcl
 │       ├── _common/
@@ -229,6 +231,38 @@ The current K3s unit still consumes the singular outputs for `primary_instance_k
 
 For environments that already created the old singleton EC2/EIP resources, Terraform `moved` blocks migrate the existing state addresses to the `"primary"` `for_each` addresses. Review `terragrunt plan` before applying: the expected result is an address move, not EC2/EIP replacement, when no other settings changed.
 
+## Node public addressing
+
+The node runs in a public subnet and there is no NAT gateway, so it needs a public address at launch for the user-data bootstrap to reach the internet. The subnet also sets `map_public_ip_on_launch`, so the module default matches it:
+
+```hcl
+associate_public_ip_address = true
+```
+
+Keep this aligned with the subnet. If the module requests `false` while the subnet assigns one anyway, the attribute never converges and every `terragrunt plan` reports an EC2 replacement even when nothing else changed. The Elastic IP is associated immediately afterwards and remains the stable endpoint.
+
+## Deletion protection
+
+EC2 API termination protection and stop protection are enabled through Terragrunt in `infrastructure/live/_common/ec2.hcl`:
+
+```hcl
+enable_termination_protection = true
+enable_stop_protection        = true
+```
+
+They are ordinary managed attributes, so clearing them in the console produces drift that the next `terragrunt plan` reports and `terragrunt apply` corrects. Never set them with `aws ec2 modify-instance-attribute`.
+
+Both attributes propagate slowly. A read taken seconds after `apply` can still report `false` and settles about a minute later, so re-read before concluding that an apply failed.
+
+While protection is on, AWS refuses to replace or terminate the node. Any run that needs to do so must clear it first, apply, and then re-enable it:
+
+```bash
+cd infrastructure/live/dev/us-east-1/ec2
+TF_VAR_enable_termination_protection=false TF_VAR_enable_stop_protection=false terragrunt apply
+```
+
+This applies to a node replacement triggered by editing the user-data bootstrap, as well as to `destroy`.
+
 ## Work on one component
 
 Each lifecycle can still be reviewed independently:
@@ -258,15 +292,31 @@ The API defaults to the current operator public `/32`. Override it before planni
 export TG_OPERATOR_CIDR="203.0.113.0/24"
 ```
 
-## Retrieve kubeconfig through Terragrunt
+## Node bootstrap through EC2 user data
 
-K3s publishes the API endpoint and base64 client material after the SSM installation association succeeds. The K3s Terraform unit assembles a kubeconfig output.
+K3s is installed by the script at `infrastructure/templates/k3s-install.sh.tftpl`, rendered by Terragrunt and delivered as EC2 user data. The node converges during first boot with no Systems Manager association, no SSH, and no operator-side provisioning step.
+
+The Elastic IP is attached moments after the instance boots, so the script discovers its own public address from IMDSv2 and adds it to the API server TLS SAN list. It then writes an operator-facing kubeconfig to `/etc/rancher/k3s/k3s-public.yaml` with the public endpoint already substituted.
+
+The bootstrap log is available on the node at `/var/log/k3s-bootstrap.log`, and also in `/var/log/cloud-init-output.log`.
+
+Because `user_data_replace_on_change` is enabled, editing the template replaces the node rather than leaving a running instance that no longer matches the committed bootstrap. See the deletion protection section below before making that change.
+
+## Kubeconfig on your local machine
+
+The K3s unit fetches the kubeconfig during `apply` using a `local-exec` provisioner, which reads the file off the node through Systems Manager. No manual copy step is required.
+
+By default it is written to `~/.kube/<cluster_name>.yaml` with mode `600`. Override the destination with the `kubeconfig_path` input.
 
 ```bash
 cd infrastructure/live/dev/us-east-1/k3s
-mkdir -p ~/.kube
-terragrunt output -raw kubeconfig > ~/.kube/k3s-dev-us-east-1.yaml
-chmod 600 ~/.kube/k3s-dev-us-east-1.yaml
+terragrunt output kubeconfig_path
+```
+
+The same content is available as a sensitive output:
+
+```bash
+terragrunt output -raw kubeconfig
 ```
 
 Optional verification:
@@ -277,7 +327,9 @@ kubectl get nodes -o wide
 kubectl get pods -A
 ```
 
-The kubeconfig output is sensitive. Remote Terraform state must be treated as sensitive data and access to the S3 state bucket must be tightly controlled.
+The kubeconfig holds cluster-admin credentials. It is written outside the repository, and the file plus the remote Terraform state must both be treated as sensitive. Access to the S3 state bucket must be tightly controlled.
+
+Retrieving the kubeconfig requires `ssm:SendCommand` against the node from wherever Terragrunt runs.
 
 ## Platform add-ons
 
@@ -312,7 +364,14 @@ terragrunt run --all output
 
 ## Destroy
 
-Destroy the whole graph through Terragrunt:
+Deletion protection must be cleared before the EC2 node can be destroyed, otherwise the run fails on the `ec2` unit:
+
+```bash
+cd infrastructure/live/dev/us-east-1/ec2
+TF_VAR_enable_termination_protection=false TF_VAR_enable_stop_protection=false terragrunt apply
+```
+
+Then destroy the whole graph through Terragrunt:
 
 ```bash
 cd infrastructure/live/dev/us-east-1
@@ -320,6 +379,12 @@ terragrunt run --all destroy
 ```
 
 Terragrunt uses the dependency graph to destroy dependents before dependencies.
+
+The local kubeconfig is not managed by Terraform and is left behind. Remove it separately:
+
+```bash
+rm -f ~/.kube/k3s-dev-us-east-1.yaml
+```
 
 ## Existing-state migration
 
@@ -346,8 +411,10 @@ Always review `terragrunt plan` after import because this revision manages the o
 - Kubernetes API `6443` is restricted to `TG_OPERATOR_CIDR`.
 - SSH `22` is not exposed; the node uses AWS Systems Manager.
 - IMDSv2 is required.
+- The node holds a public IP because the subnet has no NAT gateway; inbound access is restricted by security group rules, not by private addressing.
 - EBS is encrypted.
-- K3s kubeconfig credentials are stored in scoped SSM SecureString parameters and sensitive Terraform state.
+- K3s kubeconfig credentials live in sensitive Terraform state and in the local kubeconfig file, which is written with mode `600` outside the repository.
+- EC2 API termination and stop protection are enabled.
 - Traefik dashboard is not public by default.
 - Never commit kubeconfig, Terraform state, cloud credentials, Cloudflare tokens or private keys.
 

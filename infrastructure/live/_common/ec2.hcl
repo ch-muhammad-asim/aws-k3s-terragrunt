@@ -1,13 +1,28 @@
 # Shared EC2 compute defaults.
-# Keep compute lifecycle independent from K3s configuration/lifecycle.
+# The node bootstrap is delivered as user data, so compute converges on first
+# boot with no Run Command association, SSH access, or operator-side scripting.
 terraform {
   source = "${get_repo_root()}/infrastructure/modules//ec2"
 }
 
+locals {
+  env_config    = read_terragrunt_config(find_in_parent_folders("env.hcl"))
+  region_config = read_terragrunt_config(find_in_parent_folders("region.hcl"))
+  k3s_config    = read_terragrunt_config("${get_repo_root()}/infrastructure/live/_common/k3s.hcl")
+
+  cluster_name = "${local.env_config.locals.project_name}-${local.env_config.locals.environment}-${local.region_config.locals.aws_region}"
+}
+
 inputs = {
-  instance_type       = "t3.medium"
-  root_volume_size    = 30
+  instance_type        = "t3.medium"
+  root_volume_size     = 30
   primary_instance_key = "primary"
+
+  # Deletion protection. Clear these and apply once before any run that has to
+  # replace or destroy the node, including a bootstrap change that triggers
+  # user_data_replace_on_change.
+  enable_termination_protection = true
+  enable_stop_protection        = true
 
   # EC2 nodes are map-driven and created with Terraform for_each. The current
   # repository profile intentionally has one primary node; add map entries here
@@ -15,4 +30,13 @@ inputs = {
   instances = {
     primary = {}
   }
+
+  user_data = templatefile(
+    "${get_repo_root()}/infrastructure/templates/k3s-install.sh.tftpl",
+    {
+      cluster_name = local.cluster_name
+      k3s_version  = local.k3s_config.locals.k3s_version
+      traefik_flag = local.k3s_config.locals.enable_traefik ? "" : "--disable traefik"
+    },
+  )
 }

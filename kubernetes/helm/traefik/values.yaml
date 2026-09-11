@@ -59,12 +59,13 @@ accessLog:
   enabled: true
   format: json
 
+# No CPU limit is set on purpose: an explicit null renders as a zero limit and
+# the API server then rejects the deployment. Memory stays capped.
 resources:
   requests:
     cpu: 100m
     memory: 128Mi
   limits:
-    cpu: null
     memory: 512Mi
 
 env:

@@ -217,24 +217,22 @@ The same pattern works for `vpc`, `ec2`, `k3s`, `cert-manager` and `argocd`.
 
 ## Kubeconfig
 
-K3s publishes four scoped Parameter Store values after bootstrap:
+The node bootstrap writes an operator-facing kubeconfig to `/etc/rancher/k3s/k3s-public.yaml`, with the public API endpoint already substituted.
 
-```text
-/k3s/<cluster>/kubeconfig/server
-/k3s/<cluster>/kubeconfig/cluster-ca-data
-/k3s/<cluster>/kubeconfig/client-certificate-data
-/k3s/<cluster>/kubeconfig/client-key-data
-```
-
-The K3s Terraform module reads them only after the SSM association reports success and exposes a sensitive kubeconfig output.
+During `apply`, the K3s unit reads that file off the node through Systems Manager using a `local-exec` provisioner and writes it locally with mode `600`:
 
 ```bash
 cd infrastructure/live/dev/us-east-1/k3s
-terragrunt output -raw kubeconfig > ~/.kube/k3s-dev-us-east-1.yaml
-chmod 600 ~/.kube/k3s-dev-us-east-1.yaml
+terragrunt output kubeconfig_path
 ```
 
-This replaces the old kubeconfig retrieval shell script.
+It defaults to `~/.kube/<cluster>.yaml` and is overridden with the `kubeconfig_path` input. The same content is also a sensitive Terraform output:
+
+```bash
+terragrunt output -raw kubeconfig
+```
+
+This replaces both the old kubeconfig retrieval shell script and the scoped Parameter Store keys used by earlier revisions.
 
 ## Helm releases through Terragrunt
 

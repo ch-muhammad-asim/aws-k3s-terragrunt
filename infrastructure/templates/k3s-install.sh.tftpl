@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# K3s node bootstrap. Rendered by Terragrunt and delivered through EC2 user data,
+# so the node converges during first boot without Systems Manager Run Command,
+# SSH, or any operator-side provisioning step.
+set -euo pipefail
+
+exec > >(tee /var/log/k3s-bootstrap.log) 2>&1
+
+echo "[k3s-bootstrap] target version: ${k3s_version}"
+
+# Amazon Linux 2023 preinstalls curl-minimal, which owns /usr/bin/curl and
+# conflicts with the full curl package. Installing curl here would abort the
+# whole bootstrap, so only genuinely missing packages are installed.
+dnf install -y jq
+
+for binary in curl jq; do
+  command -v "$binary" >/dev/null 2>&1 || {
+    echo "[k3s-bootstrap] $binary is required but was not found" >&2
+    exit 1
+  }
+done
+
+# The Elastic IP is associated moments after the instance boots, so the public
+# address is discovered from IMDSv2 rather than baked in. Publishing it as a TLS
+# SAN is what lets the API server be reached from outside the VPC.
+imds_token() {
+  curl -sf -X PUT "http://169.254.169.254/latest/api/token" \
+    -H "X-aws-ec2-metadata-token-ttl-seconds: 300"
+}
+
+PUBLIC_IP=""
+for attempt in $(seq 1 30); do
+  TOKEN="$(imds_token || true)"
+  if [ -n "$TOKEN" ]; then
+    PUBLIC_IP="$(curl -sf -H "X-aws-ec2-metadata-token: $TOKEN" \
+      http://169.254.169.254/latest/meta-data/public-ipv4 || true)"
+  fi
+
+  if [ -n "$PUBLIC_IP" ]; then
+    echo "[k3s-bootstrap] discovered public address $PUBLIC_IP"
+    break
+  fi
+
+  echo "[k3s-bootstrap] waiting for the Elastic IP association ($attempt/30)"
+  sleep 5
+done
+
+if [ -z "$PUBLIC_IP" ]; then
+  echo "[k3s-bootstrap] no public address was associated with this node" >&2
+  exit 1
+fi
+
+PRIVATE_IP="$(curl -sf -H "X-aws-ec2-metadata-token: $TOKEN" \
+  http://169.254.169.254/latest/meta-data/local-ipv4)"
+
+curl -sfL https://get.k3s.io | \
+  INSTALL_K3S_VERSION="${k3s_version}" \
+  sh -s - server \
+    --node-name "${cluster_name}" \
+    --tls-san "$PUBLIC_IP" \
+    --tls-san "$PRIVATE_IP" \
+    --write-kubeconfig-mode 600 \
+    ${traefik_flag}
+
+for attempt in $(seq 1 60); do
+  if systemctl is-active --quiet k3s && /usr/local/bin/k3s kubectl get node >/dev/null 2>&1; then
+    /usr/local/bin/k3s --version
+
+    # The operator-facing kubeconfig is written next to the K3s one with the
+    # public endpoint already substituted. Terraform fetches this exact file.
+    install -d -m 0700 /etc/rancher/k3s
+    sed "s#https://127.0.0.1:6443#https://$PUBLIC_IP:6443#" \
+      /etc/rancher/k3s/k3s.yaml > /etc/rancher/k3s/k3s-public.yaml
+    chmod 0600 /etc/rancher/k3s/k3s-public.yaml
+
+    echo "[k3s-bootstrap] k3s is ready"
+    exit 0
+  fi
+
+  sleep 5
+done
+
+echo "[k3s-bootstrap] k3s did not become ready in time" >&2
+systemctl status k3s --no-pager || true
+exit 1

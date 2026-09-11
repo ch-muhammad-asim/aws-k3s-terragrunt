@@ -93,6 +93,36 @@ variable "additional_iam_policy_arns" {
   default     = []
 }
 
+variable "associate_public_ip_address" {
+  description = "Assign a public IP at launch. Required in a public subnet without a NAT gateway, and must match the subnet's auto-assign setting to avoid a permanent replacement diff."
+  type        = bool
+  default     = true
+}
+
+variable "enable_termination_protection" {
+  description = "Enable EC2 API termination protection. Must be turned off before the instance can be replaced or destroyed."
+  type        = bool
+  default     = false
+}
+
+variable "enable_stop_protection" {
+  description = "Enable EC2 API stop protection so the node cannot be stopped accidentally."
+  type        = bool
+  default     = false
+}
+
+variable "user_data" {
+  description = "Cloud-init user data executed on first boot. Empty disables user data entirely."
+  type        = string
+  default     = ""
+}
+
+variable "user_data_replace_on_change" {
+  description = "Replace the instance when user data changes so a rendered bootstrap is never left stale on a running node."
+  type        = bool
+  default     = true
+}
+
 variable "tags" {
   description = "Common AWS tags."
   type        = map(string)

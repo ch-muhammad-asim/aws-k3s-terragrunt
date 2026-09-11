@@ -130,8 +130,17 @@ resource "aws_instance" "this" {
   vpc_security_group_ids = [aws_security_group.this.id]
   iam_instance_profile   = aws_iam_instance_profile.this.name
 
-  # A stable public endpoint is supplied by the per-node EIP association below.
-  associate_public_ip_address = false
+  # The node sits in a public subnet with no NAT gateway, so it needs a public
+  # address at launch for user data to reach the internet. The subnet also
+  # auto-assigns one, and hardcoding false here made every plan replace the
+  # instance. The per-node EIP below then takes over as the stable endpoint.
+  associate_public_ip_address = var.associate_public_ip_address
+
+  # Guards against accidental deletion from the console, the CLI, and Terraform
+  # itself. Both flags must be cleared before the node can be replaced or
+  # destroyed, which is the intended friction.
+  disable_api_termination = var.enable_termination_protection
+  disable_api_stop        = var.enable_stop_protection
 
   root_block_device {
     volume_type           = "gp3"
@@ -139,6 +148,12 @@ resource "aws_instance" "this" {
     encrypted             = true
     delete_on_termination = true
   }
+
+  # Node configuration is delivered at first boot. Replacing the instance when
+  # the script changes keeps the running node identical to the committed
+  # bootstrap rather than leaving drift behind.
+  user_data                   = var.user_data == "" ? null : var.user_data
+  user_data_replace_on_change = var.user_data_replace_on_change
 
   metadata_options {
     http_endpoint               = "enabled"

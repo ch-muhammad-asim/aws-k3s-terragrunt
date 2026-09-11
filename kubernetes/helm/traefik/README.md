@@ -22,7 +22,6 @@ resources:
     cpu: 100m
     memory: 128Mi
   limits:
-    cpu: null
     memory: 512Mi
 
 env:
@@ -30,7 +29,7 @@ env:
     value: "2"
 ```
 
-The CPU request remains `100m` for scheduling while the CPU limit is intentionally absent so Traefik can burst. Memory is capped at `512Mi`. Validate the ceiling under representative traffic before scaling this baseline to larger workloads.
+The CPU request remains `100m` for scheduling while the CPU limit is intentionally absent so Traefik can burst. The key is omitted rather than set to `null`, which the chart renders as a zero limit that the API server rejects. Memory is capped at `512Mi`. Validate the ceiling under representative traffic before scaling this baseline to larger workloads.
 
 ## Plan/apply
 

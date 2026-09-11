@@ -51,11 +51,11 @@ infrastructure/
 ## Lifecycle boundaries
 
 - `vpc` owns networking.
-- `ec2` owns EC2, EIP, IAM/SSM access, security groups and EBS.
-- `k3s` owns K3s installation/configuration and publishes client material after K3s is healthy.
+- `ec2` owns EC2, EIP, IAM/SSM access, security groups, EBS and the node bootstrap delivered as user data.
+- `k3s` owns kubeconfig retrieval and exposes the client material to the add-on units.
 - `traefik`, `cert-manager` and `argocd` consume K3s outputs and manage official upstream charts through Terraform `helm_release` resources.
 
-Updating the K3s version therefore updates the K3s SSM association rather than replacing EC2. Updating a chart version only changes the corresponding Helm unit.
+The K3s version is rendered into the node bootstrap, so changing it replaces the EC2 instance. Updating a chart version only changes the corresponding Helm unit.
 
 ## Design rules
 
@@ -66,7 +66,7 @@ Updating the K3s version therefore updates the K3s SSM association rather than r
 5. **Leaf units only wire dependencies and overrides.** A new region does not copy Terraform module logic.
 6. **Dependencies are explicit.** K3s consumes EC2 outputs; platform add-ons consume K3s connection outputs.
 7. **Version upgrades are explicit.** Runtime/provider/chart versions are pinned and auditable in Git.
-8. **Secrets stay out of Git.** K3s client material is sensitive, stored in SSM SecureString parameters and protected remote state.
+8. **Secrets stay out of Git.** K3s client material is sensitive, held in protected remote state and in a local kubeconfig written outside the repository.
 
 ## Add another region
 

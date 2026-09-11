@@ -1,114 +1,87 @@
-data "aws_partition" "current" {}
-data "aws_caller_identity" "current" {}
-
+# K3s itself is installed by the EC2 user data rendered in the compute layer, so
+# this unit owns only the operator-facing side of the cluster: retrieving the
+# kubeconfig onto the machine running Terragrunt and exposing the client
+# material to the downstream Helm units.
 locals {
-  traefik_flag = var.enable_traefik ? "" : "--disable traefik"
-
-  kubeconfig_parameter_names = {
-    kubernetes_host      = "/k3s/${var.cluster_name}/kubeconfig/server"
-    cluster_ca           = "/k3s/${var.cluster_name}/kubeconfig/cluster-ca-data"
-    client_certificate   = "/k3s/${var.cluster_name}/kubeconfig/client-certificate-data"
-    client_key           = "/k3s/${var.cluster_name}/kubeconfig/client-key-data"
-  }
-
-  install_script = templatefile("${path.module}/install.sh.tftpl", {
-    cluster_name                 = var.cluster_name
-    k3s_version                  = var.k3s_version
-    public_ip                    = var.public_ip
-    region                       = var.region
-    traefik_flag                 = local.traefik_flag
-    kubernetes_host_parameter    = local.kubeconfig_parameter_names.kubernetes_host
-    cluster_ca_parameter         = local.kubeconfig_parameter_names.cluster_ca
-    client_certificate_parameter = local.kubeconfig_parameter_names.client_certificate
-    client_key_parameter         = local.kubeconfig_parameter_names.client_key
-  })
+  kubeconfig_path = var.kubeconfig_path != "" ? var.kubeconfig_path : pathexpand("~/.kube/${var.cluster_name}.yaml")
 }
 
-# Terraform creates the Parameter Store keys so their lifecycle, tags and cleanup
-# remain declarative. K3s publishes the real values after the service is healthy.
-resource "aws_ssm_parameter" "kubernetes_host" {
-  name  = local.kubeconfig_parameter_names.kubernetes_host
-  type  = "String"
-  value = "pending"
-  tier  = "Standard"
-  tags  = var.tags
+# The node publishes its kubeconfig at a fixed path during boot. Systems Manager
+# is used purely as a transport here, which keeps the workflow free of SSH keys,
+# bastions, and inbound access to port 22.
+resource "terraform_data" "kubeconfig" {
+  triggers_replace = [
+    var.instance_id,
+    var.public_ip,
+    local.kubeconfig_path,
+  ]
 
-  lifecycle {
-    ignore_changes = [value]
+  provisioner "local-exec" {
+    interpreter = ["/usr/bin/env", "bash", "-c"]
+    command     = <<-EOT
+      set -euo pipefail
+
+      REGION="${var.region}"
+      INSTANCE="${var.instance_id}"
+      DEST="${local.kubeconfig_path}"
+      DEADLINE=$((SECONDS + ${var.kubeconfig_timeout_seconds}))
+
+      mkdir -p "$(dirname "$DEST")"
+
+      while [ "$SECONDS" -lt "$DEADLINE" ]; do
+        COMMAND_ID="$(aws ssm send-command \
+          --region "$REGION" \
+          --instance-ids "$INSTANCE" \
+          --document-name AWS-RunShellScript \
+          --parameters 'commands=["cat /etc/rancher/k3s/k3s-public.yaml"]' \
+          --query Command.CommandId \
+          --output text 2>/dev/null || true)"
+
+        if [ -n "$COMMAND_ID" ]; then
+          for _ in $(seq 1 30); do
+            STATUS="$(aws ssm get-command-invocation \
+              --region "$REGION" \
+              --command-id "$COMMAND_ID" \
+              --instance-id "$INSTANCE" \
+              --query Status \
+              --output text 2>/dev/null || echo Pending)"
+
+            case "$STATUS" in
+              Success)
+                aws ssm get-command-invocation \
+                  --region "$REGION" \
+                  --command-id "$COMMAND_ID" \
+                  --instance-id "$INSTANCE" \
+                  --query StandardOutputContent \
+                  --output text > "$DEST"
+                chmod 600 "$DEST"
+                echo "[k3s] kubeconfig written to $DEST"
+                exit 0
+                ;;
+              Pending|InProgress|Delayed)
+                sleep 2
+                ;;
+              *)
+                break
+                ;;
+            esac
+          done
+        fi
+
+        echo "[k3s] waiting for the node to finish bootstrapping"
+        sleep 10
+      done
+
+      echo "[k3s] timed out waiting for the kubeconfig on $INSTANCE" >&2
+      exit 1
+    EOT
   }
 }
 
-resource "aws_ssm_parameter" "kubeconfig_credentials" {
-  for_each = {
-    cluster_ca         = local.kubeconfig_parameter_names.cluster_ca
-    client_certificate = local.kubeconfig_parameter_names.client_certificate
-    client_key         = local.kubeconfig_parameter_names.client_key
-  }
+# Reading the file only after the provisioner has run keeps the fetch and the
+# Helm provider credentials inside a single apply.
+data "local_file" "kubeconfig" {
+  filename = local.kubeconfig_path
 
-  name  = each.value
-  type  = "SecureString"
-  value = "pending"
-  tier  = "Standard"
-  tags  = var.tags
-
-  lifecycle {
-    ignore_changes = [value]
-  }
-}
-
-data "aws_iam_policy_document" "publish_kubeconfig" {
-  statement {
-    sid     = "PublishK3sKubeconfig"
-    effect  = "Allow"
-    actions = ["ssm:PutParameter"]
-
-    resources = concat(
-      [aws_ssm_parameter.kubernetes_host.arn],
-      [for parameter in aws_ssm_parameter.kubeconfig_credentials : parameter.arn],
-    )
-  }
-}
-
-resource "aws_iam_role_policy" "publish_kubeconfig" {
-  name   = "${var.cluster_name}-publish-kubeconfig"
-  role   = var.instance_role_name
-  policy = data.aws_iam_policy_document.publish_kubeconfig.json
-}
-
-# K3s lifecycle is independent from EC2 lifecycle. Updating K3s changes this
-# SSM association instead of replacing the EC2 instance.
-resource "aws_ssm_association" "install" {
-  name             = "AWS-RunShellScript"
-  association_name = "${var.cluster_name}-k3s-install"
-
-  targets {
-    key    = "InstanceIds"
-    values = [var.instance_id]
-  }
-
-  parameters = {
-    commands = local.install_script
-  }
-
-  wait_for_success_timeout_seconds = var.wait_for_success_timeout_seconds
-
-  depends_on = [aws_iam_role_policy.publish_kubeconfig]
-}
-
-# These reads happen only after the SSM association reports success. They let
-# Terragrunt expose kubeconfig and feed the Terraform Helm provider without a
-# Makefile, local bootstrap script, or Helm CLI.
-data "aws_ssm_parameter" "kubernetes_host" {
-  name = aws_ssm_parameter.kubernetes_host.name
-
-  depends_on = [aws_ssm_association.install]
-}
-
-data "aws_ssm_parameter" "kubeconfig_credentials" {
-  for_each = aws_ssm_parameter.kubeconfig_credentials
-
-  name            = each.value.name
-  with_decryption = true
-
-  depends_on = [aws_ssm_association.install]
+  depends_on = [terraform_data.kubeconfig]
 }

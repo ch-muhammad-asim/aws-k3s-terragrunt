@@ -1,72 +1,44 @@
 locals {
-  kubeconfig = yamlencode({
-    apiVersion = "v1"
-    kind       = "Config"
-    clusters = [{
-      name = var.cluster_name
-      cluster = {
-        server                       = data.aws_ssm_parameter.kubernetes_host.value
-        "certificate-authority-data" = data.aws_ssm_parameter.kubeconfig_credentials["cluster_ca"].value
-      }
-    }]
-    users = [{
-      name = var.cluster_name
-      user = {
-        "client-certificate-data" = data.aws_ssm_parameter.kubeconfig_credentials["client_certificate"].value
-        "client-key-data"         = data.aws_ssm_parameter.kubeconfig_credentials["client_key"].value
-      }
-    }]
-    contexts = [{
-      name = var.cluster_name
-      context = {
-        cluster = var.cluster_name
-        user    = var.cluster_name
-      }
-    }]
-    "current-context" = var.cluster_name
-  })
+  kubeconfig         = yamldecode(data.local_file.kubeconfig.content)
+  kubeconfig_cluster = local.kubeconfig.clusters[0].cluster
+  kubeconfig_user    = local.kubeconfig.users[0].user
 }
 
 output "k3s_version" {
-  description = "Exact K3s version configured for installation."
+  description = "Exact K3s version installed on the node."
   value       = var.k3s_version
 }
 
+output "kubeconfig_path" {
+  description = "Local path holding the cluster kubeconfig. Use it with `kubectl --kubeconfig`, or export it as KUBECONFIG."
+  value       = local.kubeconfig_path
+}
+
 output "kubernetes_api" {
-  description = "Kubernetes API endpoint. This value is intentionally non-sensitive; only the client credentials remain sensitive."
-  value       = nonsensitive(data.aws_ssm_parameter.kubernetes_host.value)
+  description = "Kubernetes API endpoint. Only the client credentials below are sensitive."
+  value       = local.kubeconfig_cluster.server
 }
 
 output "cluster_ca_certificate_data" {
   description = "Base64-encoded Kubernetes cluster CA used by downstream Terragrunt Helm units."
-  value       = data.aws_ssm_parameter.kubeconfig_credentials["cluster_ca"].value
+  value       = local.kubeconfig_cluster["certificate-authority-data"]
   sensitive   = true
 }
 
 output "client_certificate_data" {
   description = "Base64-encoded Kubernetes client certificate used by downstream Terragrunt Helm units."
-  value       = data.aws_ssm_parameter.kubeconfig_credentials["client_certificate"].value
+  value       = local.kubeconfig_user["client-certificate-data"]
   sensitive   = true
 }
 
 output "client_key_data" {
   description = "Base64-encoded Kubernetes client key used by downstream Terragrunt Helm units."
-  value       = data.aws_ssm_parameter.kubeconfig_credentials["client_key"].value
+  value       = local.kubeconfig_user["client-key-data"]
   sensitive   = true
 }
 
 output "kubeconfig" {
   description = "Complete kubeconfig. Retrieve with `terragrunt output -raw kubeconfig`."
-  value       = local.kubeconfig
+  value       = data.local_file.kubeconfig.content
   sensitive   = true
-}
-
-output "kubeconfig_parameter_names" {
-  description = "SSM Parameter Store names containing the K3s API/client material."
-  value       = local.kubeconfig_parameter_names
-}
-
-output "ssm_association_id" {
-  description = "SSM association responsible for K3s installation/upgrades."
-  value       = aws_ssm_association.install.association_id
 }
