@@ -50,22 +50,127 @@ cd infrastructure/live/dev/us-east-1
 
 ### Brand-new backend
 
-Terragrunt 1.x requires backend provisioning to be explicitly enabled. If the S3 bucket in `root.hcl` does not exist yet, a plain `terragrunt run --all init` fails with `NoSuchBucket`.
+If the S3 bucket configured by `root.hcl` does not exist yet, a plain:
 
-For the very first initialization, run:
+```bash
+terragrunt run --all init
+```
+
+fails with `NoSuchBucket` because Terraform cannot initialize against a backend that does not exist.
+
+For the very first initialization, use:
 
 ```bash
 terragrunt run --all --backend-bootstrap init
 ```
 
-`--backend-bootstrap` authorizes Terragrunt to create the remote-state resources defined by the `remote_state` block before Terraform initialization. This keeps backend creation inside Terragrunt; do not create the bucket manually with AWS CLI and do not add a separate Terraform bootstrap project.
+This keeps backend creation inside Terragrunt and avoids a separate AWS CLI or Terraform bootstrap project.
 
-Once the backend exists, use the normal lifecycle:
+### What you should expect on the first run
+
+Terragrunt first calculates the dependency graph:
+
+```text
+.
+╰── vpc
+    ╰── ec2
+        ╰── k3s
+            ├── traefik
+            │   ╰── cert-manager
+            │       ╰── argocd
+            ├── cert-manager
+            ╰── argocd
+```
+
+If the generated S3 backend bucket is missing, Terragrunt asks for confirmation before creating it:
+
+```text
+Remote state S3 bucket <generated-state-bucket> does not exist or is not accessible.
+Would you like Terragrunt to create it? (y/n) y
+```
+
+Answer `y` only when the AWS account and region are the ones you intend to modify.
+
+After that, Terragrunt initializes the units in dependency order. A successful unit normally shows Terraform messages equivalent to:
+
+```text
+Successfully configured the backend "s3"!
+Initializing provider plugins...
+Terraform has been successfully initialized!
+```
+
+The first run can take longer because provider plugins must be downloaded into the Terragrunt working cache.
+
+### Expected mock-output warnings
+
+On a fresh stack, dependency units do not have Terraform outputs yet because no infrastructure has been applied. You can therefore see warnings such as:
+
+```text
+Config .../vpc/terragrunt.hcl is a dependency of .../ec2/terragrunt.hcl
+that has no outputs, but mock outputs provided and returning those in dependency output.
+```
+
+The same pattern can appear for `ec2 -> k3s` and for K3s-backed Helm units.
+
+These warnings are **expected during fresh-stack `init`, `validate`, and planning**. The relevant dependency blocks explicitly allow mocks for those commands so Terragrunt can build and initialize the complete graph before the real resources exist.
+
+Mocks are not the production values used after dependencies have been applied. Once the stack exists, downstream units read the real dependency outputs.
+
+### What `init` does and does not do
+
+After a successful first initialization:
+
+```text
+S3 remote backend     created/configured
+Terraform providers   initialized/downloaded
+Terragrunt DAG         resolved
+VPC resources          NOT created yet
+EC2 instance           NOT created yet
+K3s cluster            NOT created yet
+Helm releases          NOT created yet
+```
+
+`init` prepares the deployment. Actual infrastructure changes start with `apply`.
+
+Terraform can print a message asking you to commit `.terraform.lock.hcl`. With Terragrunt, Terraform runs from generated working directories under `.terragrunt-cache`; do not commit files from that cache. Provider versions and constraints for this repository are maintained in the Terraform modules and `VERSIONS.md`.
+
+### Plan and apply
+
+After initialization:
 
 ```bash
 terragrunt run --all plan
+```
+
+Review the plan, then deploy the complete graph:
+
+```bash
 terragrunt run --all apply
 ```
+
+Terragrunt uses dependency blocks to order the deployment:
+
+```text
+VPC -> EC2 -> K3s -> Traefik -> cert-manager -> Argo CD
+```
+
+After the first successful apply, run another plan:
+
+```bash
+terragrunt run --all plan
+```
+
+At this point the dependencies have real state and real outputs, and the Kubernetes add-on units can refresh against the live K3s API rather than fresh-stack mocks.
+
+### Later initialization
+
+Once the backend already exists, normal initialization is enough:
+
+```bash
+terragrunt run --all init
+```
+
+Use `--backend-bootstrap` only when you intentionally want Terragrunt to be allowed to bootstrap missing backend infrastructure.
 
 An equivalent explicit Terragrunt-only bootstrap sequence is:
 
@@ -76,19 +181,11 @@ cd ..
 terragrunt run --all init
 ```
 
-Use one approach or the other; the single `run --all --backend-bootstrap init` command is the recommended first-run path.
+Use one approach or the other. For a brand-new environment, the recommended path is the single command:
 
-Terragrunt orders the apply using dependency blocks; there is no hand-written install sequence in a Makefile or shell script.
-
-### Why the explicit flag is necessary
-
-Modern Terragrunt no longer creates remote backend infrastructure implicitly. This is intentional: creating an S3 bucket or other backend resources is a cloud-side mutation, so Terragrunt now requires explicit opt-in using `--backend-bootstrap` or the `TG_BACKEND_BOOTSTRAP=true` environment variable.
-
-For CI, either keep the first-run flag explicit or set the environment variable only in the bootstrap workflow. Do not enable backend bootstrap globally unless you intentionally want Terragrunt to be allowed to create/update backend infrastructure on normal runs.
-
-### Fresh-stack planning note
-
-Before K3s exists, the Helm units cannot have a real Kubernetes connection. Their dependency blocks therefore provide mocks for `init`, `validate` and `plan`. The first complete apply creates K3s before Helm units are applied. Repeat `terragrunt run --all plan` after the first deployment for a plan based entirely on live Kubernetes state.
+```bash
+terragrunt run --all --backend-bootstrap init
+```
 
 ## Component lifecycle
 
@@ -117,6 +214,7 @@ The K3s Terraform module reads them only after the SSM association reports succe
 
 ```bash
 cd infrastructure/live/dev/us-east-1/k3s
+mkdir -p ~/.kube
 terragrunt output -raw kubeconfig > ~/.kube/k3s-dev-us-east-1.yaml
 chmod 600 ~/.kube/k3s-dev-us-east-1.yaml
 ```
