@@ -113,19 +113,67 @@ cd infrastructure/live/dev/us-east-1
 
 ### First run: bootstrap the remote backend
 
-Terragrunt 1.x does **not** create backend infrastructure implicitly. On a brand-new AWS account/region the S3 state bucket does not exist yet, so the first `init` must explicitly allow Terragrunt to bootstrap it:
+On a brand-new AWS account/region the S3 state bucket does not exist yet. A plain `terragrunt run --all init` will fail with `NoSuchBucket`; the first initialization must explicitly allow Terragrunt to bootstrap the backend:
 
 ```bash
 terragrunt run --all --backend-bootstrap init
 ```
 
-This creates the S3 backend described by `infrastructure/live/root.hcl` and initializes every unit. No manual `aws s3` command, Makefile target, Terraform command, or pre-created bucket is required.
+Terragrunt first prints the dependency graph and, when the state bucket is missing, prompts for confirmation before creating it. A typical first-run interaction is:
 
-After the backend exists, normal commands do not need `--backend-bootstrap`:
+```text
+Remote state S3 bucket <generated-state-bucket> does not exist or is not accessible.
+Would you like Terragrunt to create it? (y/n) y
+```
+
+Answer `y` only when you intentionally expect Terragrunt to create the backend in the active AWS account/region.
+
+After confirmation, Terragrunt initializes each unit in dependency order:
+
+```text
+vpc -> ec2 -> k3s -> traefik -> cert-manager -> argocd
+```
+
+On a completely fresh stack you may see warnings similar to:
+
+```text
+Config .../vpc/terragrunt.hcl is a dependency of .../ec2/terragrunt.hcl
+that has no outputs, but mock outputs were provided.
+```
+
+That is expected during `init` and fresh-stack planning. The dependency does not have real Terraform outputs yet because nothing has been applied, so the leaf configuration uses its declared mock outputs for commands where mocks are explicitly allowed.
+
+A successful `init` means the remote backend has been created/configured and Terraform providers/modules have been initialized. **It does not create the VPC, EC2 instance, K3s cluster, or Helm releases.** Infrastructure creation starts with `apply`.
+
+No manual `aws s3` command, Makefile target, direct Terraform command, or pre-created bucket is required.
+
+### Plan and apply
+
+After initialization:
 
 ```bash
 terragrunt run --all plan
 terragrunt run --all apply
+```
+
+Terragrunt applies dependencies in order:
+
+```text
+VPC -> EC2 -> K3s -> Traefik -> cert-manager -> Argo CD
+```
+
+After the first successful deployment, repeat:
+
+```bash
+terragrunt run --all plan
+```
+
+At that point the dependency outputs are real and the Helm units can refresh against the live K3s API instead of using fresh-stack mocks.
+
+For later reinitialization, after the backend already exists, the normal command is sufficient:
+
+```bash
+terragrunt run --all init
 ```
 
 If you prefer explicit backend lifecycle management instead of the one-command first run, this equivalent Terragrunt-only sequence is also valid:
@@ -136,14 +184,6 @@ terragrunt backend bootstrap
 cd ..
 terragrunt run --all init
 ```
-
-Terragrunt applies dependencies in order:
-
-```text
-VPC -> EC2 -> K3s -> Traefik -> cert-manager -> Argo CD
-```
-
-On a brand-new environment, downstream Kubernetes units use mock dependency outputs for `init`/`plan` because the K3s API does not exist yet. After the first successful apply, repeat `terragrunt run --all plan` to get a fully live refresh of every Helm release.
 
 ## Work on one component
 
