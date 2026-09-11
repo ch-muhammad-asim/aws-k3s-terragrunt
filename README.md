@@ -111,30 +111,30 @@ Choose the environment/region directory:
 cd infrastructure/live/dev/us-east-1
 ```
 
-Bootstrap the remote S3 backend from one unit:
+### First run: bootstrap the remote backend
+
+Terragrunt 1.x does **not** create backend infrastructure implicitly. On a brand-new AWS account/region the S3 state bucket does not exist yet, so the first `init` must explicitly allow Terragrunt to bootstrap it:
+
+```bash
+terragrunt run --all --backend-bootstrap init
+```
+
+This creates the S3 backend described by `infrastructure/live/root.hcl` and initializes every unit. No manual `aws s3` command, Makefile target, Terraform command, or pre-created bucket is required.
+
+After the backend exists, normal commands do not need `--backend-bootstrap`:
+
+```bash
+terragrunt run --all plan
+terragrunt run --all apply
+```
+
+If you prefer explicit backend lifecycle management instead of the one-command first run, this equivalent Terragrunt-only sequence is also valid:
 
 ```bash
 cd vpc
 terragrunt backend bootstrap
 cd ..
-```
-
-Initialize all units:
-
-```bash
 terragrunt run --all init
-```
-
-Review the stack:
-
-```bash
-terragrunt run --all plan
-```
-
-Apply the complete dependency graph:
-
-```bash
-terragrunt run --all apply
 ```
 
 Terragrunt applies dependencies in order:
