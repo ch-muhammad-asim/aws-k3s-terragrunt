@@ -162,6 +162,22 @@ terragrunt run --all plan
 
 At this point the dependencies have real state and real outputs, and the Kubernetes add-on units can refresh against the live K3s API rather than fresh-stack mocks.
 
+### Partial apply failures are safe to resume
+
+Each unit has its own remote Terraform state. A `run --all apply` can therefore succeed for earlier dependencies and fail later in the graph. For example, VPC and EC2 may already be created while K3s or a Helm release fails validation or deployment.
+
+Do **not** manually delete the successful resources just because a downstream unit failed. Fix the configuration, pull the corrected revision, review the plan, and rerun:
+
+```bash
+git pull
+terragrunt run --all plan
+terragrunt run --all apply
+```
+
+Terragrunt/Terraform will refresh each unit. Resources already recorded in state should normally produce no changes, while the failed unit and its dependents continue from the point that still needs work.
+
+A real first-deployment validation exposed an important Terraform sensitivity detail in the K3s unit: the AWS provider treats SSM parameter values as sensitive, even when the parameter contains only the Kubernetes API URL. The repository therefore explicitly unwraps only the non-secret `kubernetes_api` output with Terraform `nonsensitive(...)`; CA/client certificate/client key and full kubeconfig outputs remain sensitive. This prevents an `Output refers to sensitive values` failure without weakening protection of Kubernetes credentials.
+
 ### Later initialization
 
 Once the backend already exists, normal initialization is enough:
@@ -214,7 +230,6 @@ The K3s Terraform module reads them only after the SSM association reports succe
 
 ```bash
 cd infrastructure/live/dev/us-east-1/k3s
-mkdir -p ~/.kube
 terragrunt output -raw kubeconfig > ~/.kube/k3s-dev-us-east-1.yaml
 chmod 600 ~/.kube/k3s-dev-us-east-1.yaml
 ```
