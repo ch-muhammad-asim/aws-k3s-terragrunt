@@ -63,7 +63,7 @@ variable "instances" {
   validation {
     condition = alltrue([
       for instance in values(var.instances) :
-      try(instance.root_volume_size, null) == null || try(instance.root_volume_size, 0) >= 20
+      instance.root_volume_size == null ? true : instance.root_volume_size >= 20
     ])
     error_message = "Each per-instance root_volume_size override must be at least 20 GiB."
   }
