@@ -22,8 +22,6 @@ kubeconfig*
 .idea/
 .vscode/
 
-# Helm dependency/build artifacts and local environment overrides
-kubernetes/helm/*/charts/
-kubernetes/helm/*/*.tgz
+# Local Kubernetes values overrides
 kubernetes/helm/*/values-local.yaml
 kubernetes/helm/argocd/values-traefik.yaml

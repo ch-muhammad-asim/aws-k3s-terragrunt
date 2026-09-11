@@ -1,47 +1,50 @@
 # Version matrix
 
-Runtime/platform versions are intentionally pinned so a rebuild does not silently change behavior. Upstream versions below were checked on **2026-09-06**.
+Runtime/platform versions are intentionally pinned so a rebuild does not silently change behavior.
 
 | Component | Version / constraint | Source of truth |
 |---|---|---|
 | K3s | `v1.36.4+k3s1` | `infrastructure/live/_common/k3s.hcl` |
-| Traefik Helm chart | `41.4.0` | `kubernetes/helm/traefik/Chart.yaml` |
-| Traefik Proxy | `v3.7.12` | `kubernetes/helm/traefik/Chart.yaml` |
-| Traefik wrapper chart | `1.0.0` | `kubernetes/helm/traefik/Chart.yaml` |
-| Traefik whoami smoke test | `v1.12.0` | `kubernetes/helm/traefik/examples/whoami.yaml` |
-| cert-manager Helm chart | `v1.21.1` | `kubernetes/helm/cert-manager/Chart.yaml` |
-| cert-manager application | `v1.21.1` | `kubernetes/helm/cert-manager/Chart.yaml` |
-| cert-manager wrapper chart | `1.0.0` | `kubernetes/helm/cert-manager/Chart.yaml` |
-| Argo CD Helm chart | `10.8.1` | `kubernetes/helm/argocd/Chart.yaml` |
-| Argo CD application | `v3.5.2` | `kubernetes/helm/argocd/Chart.yaml` |
-| Argo CD wrapper chart | `1.0.0` | `kubernetes/helm/argocd/Chart.yaml` |
+| HashiCorp Helm provider | `3.2.0` | `infrastructure/modules/helm-release/versions.tf` |
+| Traefik Helm chart | `41.4.0` | `infrastructure/live/_common/traefik.hcl` |
+| Traefik Proxy | `v3.7.12` | upstream chart `41.4.0` |
+| Traefik whoami example image | `v1.12.0` | `kubernetes/helm/traefik/examples/whoami.yaml` |
+| cert-manager Helm chart/application | `v1.21.1` | `infrastructure/live/_common/cert-manager.hcl` |
+| Argo CD Helm chart | `10.8.1` | `infrastructure/live/_common/argocd.hcl` |
+| Argo CD application | `v3.5.2` | upstream chart `10.8.1` |
 | Terraform CLI | `>= 1.8.0` | `infrastructure/modules/*/versions.tf` |
 | AWS provider | `>= 5.0, < 7.0` | `infrastructure/modules/*/versions.tf` |
-| Amazon Linux | AL2023 current patched x86_64 AMI | `infrastructure/modules/ec2/main.tf` via AWS SSM public parameter |
+| Amazon Linux | AL2023 current patched x86_64 AMI | EC2 module via AWS SSM public parameter |
 
 ## Ownership
 
+- Operators invoke **Terragrunt only** for infrastructure and platform lifecycle.
 - EC2 lifecycle and AWS compute settings are owned by `infrastructure/modules/ec2`.
 - K3s installation/upgrades are owned independently by `infrastructure/modules/k3s` through AWS Systems Manager.
-- The K3s version pin belongs in shared K3s configuration, not in the EC2 module or an environment-specific leaf.
-- Helm application versions live in each wrapper `Chart.yaml`.
+- Traefik, cert-manager and Argo CD are Terraform `helm_release` resources driven through Terragrunt leaf units.
+- Helm chart versions live in `infrastructure/live/_common/{traefik,cert-manager,argocd}.hcl`.
+- `kubernetes/helm/*/values.yaml` contains only upstream chart values; local wrapper charts were intentionally removed.
 
-## Verify deployed versions
+## Verify state through Terragrunt
 
 ```bash
-kubectl version
-kubectl get nodes -o wide
-
-make outputs ENV=dev REGION=us-east-1
-
-helm -n traefik list
-helm -n cert-manager list
-helm -n argocd list
+cd infrastructure/live/dev/us-east-1
+terragrunt run --all output
 ```
 
-To verify K3s directly on the node:
+Retrieve kubeconfig through the K3s unit if `kubectl` verification is needed:
 
 ```bash
-make ssm ENV=dev REGION=us-east-1
-k3s --version
+cd k3s
+terragrunt output -raw kubeconfig > ~/.kube/k3s-dev-us-east-1.yaml
+```
+
+Then, optionally:
+
+```bash
+export KUBECONFIG=~/.kube/k3s-dev-us-east-1.yaml
+kubectl get nodes -o wide
+kubectl -n traefik get pods,svc
+kubectl -n cert-manager get pods
+kubectl -n argocd get pods
 ```

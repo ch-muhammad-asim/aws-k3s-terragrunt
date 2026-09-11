@@ -1,181 +1,67 @@
-# Traefik on K3s with Helm
+# Traefik on K3s — Terragrunt managed
 
-This directory replaces K3s-bundled Traefik with the official Traefik Helm chart, pinned through a local wrapper chart.
+Traefik is deployed from the official upstream chart through `infrastructure/modules/helm-release` and the live Terragrunt unit `infrastructure/live/dev/us-east-1/traefik`.
 
-## Pinned versions
+## Versions
 
 | Component | Version |
 |---|---:|
 | K3s | `v1.36.4+k3s1` |
+| HashiCorp Helm provider | `3.2.0` |
 | Traefik Helm chart | `41.4.0` |
 | Traefik Proxy | `v3.7.12` |
-| whoami smoke-test image | `v1.12.0` |
-| Local wrapper chart | `1.0.0` |
+| whoami reference image | `v1.12.0` |
 
-K3s configuration is centralized in `infrastructure/live/_common/k3s.hcl`, where bundled Traefik is disabled. Environment-specific leaves do not duplicate this platform setting.
+`values.yaml` is written for the **upstream Traefik chart directly**. The historical wrapper chart and install/test/uninstall scripts were removed.
 
-## Resource/runtime baseline
-
-The Traefik dependency is configured under the `traefik:` key in `values.yaml` because this repository uses a local wrapper chart. The baseline is:
+## Resource baseline
 
 ```yaml
-traefik:
-  resources:
-    requests:
-      cpu: 100m
-      memory: 128Mi
-    limits:
-      cpu: null
-      memory: 512Mi
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: null
+    memory: 512Mi
 
-  env:
-    - name: GOMAXPROCS
-      value: "2"
+env:
+  - name: GOMAXPROCS
+    value: "2"
 ```
 
-The CPU request remains `100m` for scheduling and bin packing, while the CPU limit is removed so Traefik can burst when node capacity is available. The memory request remains `128Mi` and the hard memory limit is `512Mi`. `GOMAXPROCS=2` controls Go execution parallelism; it does not reserve two CPUs.
+The CPU request remains `100m` for scheduling while the CPU limit is intentionally absent so Traefik can burst. Memory is capped at `512Mi`. Validate the ceiling under representative traffic before scaling this baseline to larger workloads.
 
-Traefik chart `41.4.0` defaults `deployment.goMemLimitPercentage` to `0.9`. With the `512Mi` memory limit set, the chart derives `GOMEMLIMIT` from that limit. No separate `GOMEMLIMIT` override is required here.
-
-Validate the `512Mi` ceiling against representative peak traffic and monitor memory, OOM kills, restarts, p95/p99 latency, and autoscaler behavior before using the baseline for a larger production workload.
-
-## Prerequisites
-
-From the repository root:
+## Plan/apply
 
 ```bash
-make kubeconfig ENV=dev REGION=us-east-1
-export KUBECONFIG=~/.kube/k3s-dev-us-east-1.yaml
-kubectl get nodes -o wide
-helm version
+cd infrastructure/live/dev/us-east-1/traefik
+terragrunt plan
+terragrunt apply
 ```
 
-## Inspect the official chart
+Or operate the complete stack from the region directory:
 
 ```bash
-helm repo add traefik https://traefik.github.io/charts
-helm repo update
-helm repo list
-helm search repo traefik/traefik
-helm search repo traefik/traefik --versions | head -20
-helm show chart traefik/traefik --version 41.4.0
-helm show readme traefik/traefik --version 41.4.0
-helm show values traefik/traefik --version 41.4.0
-helm show all traefik/traefik --version 41.4.0
+cd ..
+terragrunt run --all apply
 ```
 
-## Validate the wrapper chart
+## Service exposure
+
+K3s ServiceLB remains enabled. Traefik uses a `LoadBalancer` Service, allowing ports 80/443 to be exposed on the node in the current single-node profile.
+
+The dashboard is disabled by default.
+
+## Optional HTTPS redirect
+
+`values-https-redirect.example.yaml` is a reference override. If the redirect becomes part of the desired platform state, merge it into `values.yaml` (or intentionally combine the files in `_common/traefik.hcl`) and apply the Traefik Terragrunt unit. Do not perform a separate manual Helm upgrade.
+
+## Runtime verification
+
+After retrieving kubeconfig with `terragrunt output -raw kubeconfig` from the K3s unit, optional checks include:
 
 ```bash
-cd kubernetes/helm/traefik
-
-helm dependency update .
-helm dependency list .
-helm lint . --values values.yaml
-helm template traefik . --namespace traefik --values values.yaml >/tmp/traefik-rendered.yaml
-```
-
-Expected dependency:
-
-```text
-traefik  41.4.0  https://traefik.github.io/charts
-```
-
-Inspect `/tmp/traefik-rendered.yaml` and confirm the Traefik container has no CPU limit, a `512Mi` memory limit, requests of `100m` CPU and `128Mi` memory, and `GOMAXPROCS="2"`.
-
-## Install
-
-Preferred platform workflow from the repository root:
-
-```bash
-make platform-install
-```
-
-Traefik only:
-
-```bash
-cd kubernetes/helm/traefik
-./install.sh
-```
-
-Equivalent Helm command:
-
-```bash
-helm dependency update .
-helm upgrade --install traefik . \
-  --namespace traefik \
-  --create-namespace \
-  --values values.yaml \
-  --wait \
-  --timeout 10m
-```
-
-K3s ServiceLB remains enabled. The Traefik Service uses `LoadBalancer`, allowing the single-node K3s profile to expose ports 80/443 through the node/EIP.
-
-## Verify
-
-```bash
-helm -n traefik list
-helm -n traefik get metadata traefik
-kubectl -n traefik get pods -o wide
-kubectl -n traefik get deploy,svc
-kubectl get ingressclass
-kubectl describe ingressclass traefik
-kubectl -n traefik logs deployment/traefik --tail=100
-kubectl -n kube-system get pods | grep svclb || true
-```
-
-## End-to-end smoke test
-
-```bash
-cd kubernetes/helm/traefik
-./test.sh
-```
-
-The test deploys pinned `traefik/whoami:v1.12.0`, creates an Ingress using the `traefik` class, and verifies HTTP routing through a temporary local port-forward.
-
-For an EC2 Elastic IP test:
-
-```bash
-make outputs ENV=dev REGION=us-east-1
-PUBLIC_IP=<public_ip_output>
-curl -H 'Host: whoami.local' "http://${PUBLIC_IP}/"
-```
-
-## Optional HTTP -> HTTPS redirect
-
-Enable only after TLS routes/certificates are ready:
-
-```bash
-helm upgrade --install traefik . \
-  --namespace traefik \
-  --values values.yaml \
-  --values values-https-redirect.example.yaml \
-  --wait \
-  --timeout 10m
-```
-
-## Dashboard
-
-Do not expose the insecure API. Use local port-forwarding:
-
-```bash
-kubectl -n traefik port-forward deployment/traefik 9000:8080
-```
-
-Open `http://127.0.0.1:9000/dashboard/`.
-
-## Upgrade
-
-```bash
-helm repo update
-helm search repo traefik/traefik --versions | head -20
-```
-
-Update `Chart.yaml` and `VERSIONS.md`, then lint/render before applying.
-
-## Uninstall
-
-```bash
-./uninstall.sh
+kubectl -n traefik get pods,svc
+kubectl get ingressclass traefik
 ```

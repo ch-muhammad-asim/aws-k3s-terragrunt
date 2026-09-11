@@ -18,6 +18,11 @@ variable "instance_id" {
   type        = string
 }
 
+variable "instance_role_name" {
+  description = "IAM role attached to the EC2 instance. K3s adds only the scoped permission required to publish kubeconfig material."
+  type        = string
+}
+
 variable "public_ip" {
   description = "Stable public IP added to the K3s API TLS SAN list."
   type        = string
@@ -51,7 +56,7 @@ variable "wait_for_success_timeout_seconds" {
 }
 
 variable "tags" {
-  description = "Common tags passed by Terragrunt for a consistent module interface."
+  description = "Common tags passed by Terragrunt."
   type        = map(string)
   default     = {}
 }

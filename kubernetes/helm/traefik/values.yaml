@@ -1,77 +1,72 @@
-# Traefik Helm chart: 41.4.0
+# Upstream Traefik Helm chart: 41.4.0
 # Traefik Proxy: v3.7.12
-# K3s target: v1.36.4+k3s1
-#
-# The K3s-bundled Traefik is disabled in Terragrunt. This file configures the
-# separately Helm-managed Traefik dependency declared in Chart.yaml.
-traefik:
-  deployment:
-    kind: Deployment
-    replicas: 1
+# Managed by infrastructure/live/*/*/traefik through Terragrunt.
+deployment:
+  kind: Deployment
+  replicas: 1
 
-  ingressClass:
+ingressClass:
+  enabled: true
+  isDefaultClass: true
+  name: traefik
+
+providers:
+  kubernetesCRD:
     enabled: true
-    isDefaultClass: true
-    name: traefik
-
-  providers:
-    kubernetesCRD:
+    allowCrossNamespace: false
+    allowExternalNameServices: false
+  kubernetesIngress:
+    enabled: true
+    allowExternalNameServices: false
+    publishedService:
       enabled: true
-      allowCrossNamespace: false
-      allowExternalNameServices: false
-    kubernetesIngress:
-      enabled: true
-      allowExternalNameServices: false
-      publishedService:
-        enabled: true
-    kubernetesGateway:
-      enabled: false
-
-  gateway:
-    enabled: false
-  gatewayClass:
+  kubernetesGateway:
     enabled: false
 
-  service:
-    enabled: true
-    # K3s ServiceLB exposes LoadBalancer services on the node. On this
-    # single-node cluster that makes ports 80/443 reachable through the EC2 EIP.
-    spec:
-      type: LoadBalancer
+gateway:
+  enabled: false
+gatewayClass:
+  enabled: false
 
-  ports:
-    web:
-      expose:
-        default: true
-      exposedPort: 80
-    websecure:
-      expose:
-        default: true
-      exposedPort: 443
+service:
+  enabled: true
+  # K3s ServiceLB exposes LoadBalancer services on the node. On the current
+  # single-node profile this makes ports 80/443 reachable through the EC2 EIP.
+  spec:
+    type: LoadBalancer
 
-  ingressRoute:
-    # Never expose the Traefik dashboard publicly by default.
-    dashboard:
-      enabled: false
+ports:
+  web:
+    expose:
+      default: true
+    exposedPort: 80
+  websecure:
+    expose:
+      default: true
+    exposedPort: 443
 
-  global:
-    checkNewVersion: false
-    sendAnonymousUsage: false
+ingressRoute:
+  dashboard:
+    enabled: false
 
-  log:
-    level: INFO
-  accessLog:
-    enabled: true
-    format: json
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
 
-  resources:
-    requests:
-      cpu: 100m
-      memory: 128Mi
-    limits:
-      cpu: null
-      memory: 512Mi
+log:
+  level: INFO
+accessLog:
+  enabled: true
+  format: json
 
-  env:
-    - name: GOMAXPROCS
-      value: "2"
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: null
+    memory: 512Mi
+
+env:
+  - name: GOMAXPROCS
+    value: "2"

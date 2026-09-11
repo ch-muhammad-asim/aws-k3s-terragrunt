@@ -6,14 +6,14 @@ This directory contains rendered architecture assets used by the repository docu
 
 ![K3s on AWS platform architecture](k3s-platform-overview.svg)
 
-The SVG represents the current repository profile:
+The SVG represents the repository profile:
 
-- Terraform/Terragrunt provision AWS infrastructure and keep remote state in S3.
-- VPC, EC2, and K3s are separate lifecycle/state boundaries.
-- AWS Systems Manager installs and configures K3s on the existing EC2 instance.
+- Terragrunt drives Terraform for AWS infrastructure and S3 remote state.
+- VPC, EC2 and K3s are separate lifecycle/state boundaries.
+- AWS Systems Manager installs/configures K3s on the existing EC2 instance.
 - the single K3s node runs control-plane and workload components.
-- K3s bundled Traefik is disabled; Traefik is installed and version-pinned through Helm.
-- cert-manager and Argo CD are also Helm-managed platform services.
+- K3s bundled Traefik is disabled.
+- Traefik, cert-manager and Argo CD are official Helm charts managed as Terraform `helm_release` resources through separate Terragrunt units.
 - the current topology is single-node and therefore does not provide node-level high availability.
 
-The SVG is intentionally committed as a repository asset rather than generated at page-render time, so GitHub, documentation sites, and downstream consumers render the same reviewed architecture image.
+The SVG is committed as a repository asset so GitHub and downstream documentation render the same reviewed architecture image.

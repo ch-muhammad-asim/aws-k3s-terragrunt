@@ -1,35 +1,39 @@
-# Kubernetes platform Helm deployments
+# Kubernetes add-on values managed by Terragrunt
 
-These charts are version-pinned and installed after K3s is reachable.
+This directory contains **values for official upstream Helm charts**. The charts themselves are managed as Terraform `helm_release` resources through Terragrunt.
 
-## Deployment order
+There are no local wrapper charts and no install/uninstall shell scripts.
 
-1. `traefik` - ingress controller and ports 80/443
-2. `cert-manager` - certificate lifecycle and ACME support
-3. `argocd` - GitOps controller/UI
+## Terragrunt units
 
-From the repository root:
+| Add-on | Live unit | Upstream chart |
+|---|---|---|
+| Traefik | `infrastructure/live/dev/us-east-1/traefik` | `traefik/traefik` `41.4.0` |
+| cert-manager | `infrastructure/live/dev/us-east-1/cert-manager` | `jetstack/cert-manager` `v1.21.1` |
+| Argo CD | `infrastructure/live/dev/us-east-1/argocd` | `argo/argo-cd` `10.8.1` |
 
-```bash
-make kubeconfig ENV=dev REGION=us-east-1
-export KUBECONFIG=~/.kube/k3s-dev-us-east-1.yaml
+The dependency order is:
 
-make platform-install
-make platform-test
+```text
+K3s -> Traefik -> cert-manager -> Argo CD
 ```
 
-The root-level interface avoids environment-specific `cd ../../..` paths in operator runbooks and CI.
-
-## Verify
+Apply the whole region stack:
 
 ```bash
-helm -n traefik list
-helm -n cert-manager list
-helm -n argocd list
-kubectl get ingressclass
-kubectl -n traefik get pods,svc
-kubectl -n cert-manager get pods
-kubectl -n argocd get pods
+cd infrastructure/live/dev/us-east-1
+terragrunt run --all plan
+terragrunt run --all apply
 ```
 
-Use the component READMEs for chart-level inspection, manual Helm commands, examples and troubleshooting.
+Apply only one release:
+
+```bash
+cd infrastructure/live/dev/us-east-1/traefik
+terragrunt plan
+terragrunt apply
+```
+
+Chart pins/repositories are defined in `infrastructure/live/_common/*.hcl`; this directory only owns chart values and reference examples.
+
+`kubectl` can be used after deployment for runtime troubleshooting, but it is not part of the deployment lifecycle.

@@ -1,222 +1,270 @@
-# AWS EC2 K3s Platform with Terraform, Terragrunt and Helm
+# AWS EC2 K3s Platform with Terragrunt
 
-A version-pinned K3s platform on AWS with clear lifecycle boundaries between networking, compute, K3s configuration, and Kubernetes add-ons.
+A version-pinned K3s platform on AWS where **Terragrunt is the only deployment/orchestration interface**. Terraform remains the execution engine underneath Terragrunt, and the HashiCorp Helm provider manages Kubernetes add-ons declaratively.
+
+There is no Makefile, no platform install/uninstall shell wrapper, and no requirement to run Helm CLI commands to build the platform.
 
 ## Architecture
 
 ![K3s on AWS platform architecture](docs/diagrams/k3s-platform-overview.svg)
 
 ```text
-VPC -> EC2 -> K3s -> Traefik -> cert-manager -> Argo CD
+Terragrunt DAG
+
+VPC
+ |
+ v
+EC2
+ |
+ v
+K3s
+ |
+ v
+Traefik
+ |
+ v
+cert-manager
+ |
+ v
+Argo CD
 ```
 
-- VPC is managed independently.
-- EC2 compute, IAM/SSM, security group, EIP and EBS are managed by the EC2 module.
-- K3s installation and upgrades are managed by a separate K3s module through AWS Systems Manager.
-- K3s bundled Traefik is disabled.
-- Traefik, cert-manager and Argo CD are version-pinned Helm deployments.
-- Terraform state is separated by live component.
+Every box is an independent Terragrunt unit with its own Terraform state. Terragrunt dependency blocks define the order.
 
-The current compute profile is a single EC2 K3s server/worker to keep the initial deployment cost-conscious. It is not node-level HA; the module/state separation is designed so the topology can evolve without coupling K3s lifecycle to one EC2 resource definition.
+- `vpc` owns AWS networking.
+- `ec2` owns EC2, EIP, IAM/SSM, security groups and EBS.
+- `k3s` installs/upgrades K3s through AWS Systems Manager without replacing EC2.
+- `traefik`, `cert-manager` and `argocd` use a reusable Terraform `helm_release` module, but are planned/applied/destroyed through Terragrunt.
+- K3s publishes the Kubernetes API/client material to scoped SSM Parameter Store keys. Downstream Terragrunt units consume the resulting K3s outputs, so no kubeconfig bootstrap script is required for deployment.
 
-For K3s topology guidance and the K3s vs kubeadm research/decision matrix, see [`docs/k3s/`](docs/k3s/).
+The current compute profile is a single EC2 K3s server/worker. It is intentionally non-HA; the module/state boundaries allow later evolution toward multi-node HA.
 
 ## Repository layout
 
 ```text
 .
-├── Makefile
 ├── README.md
 ├── VERSIONS.md
 ├── docs/
 │   ├── README.md
+│   ├── terragrunt-workflow/README.md
 │   ├── diagrams/
-│   │   └── k3s-platform-overview.svg
-│   └── k3s/
-│       ├── README.md
-│       ├── architecture.md
-│       └── kubeadm-comparison.md
+│   ├── k3s/
+│   ├── k3s-vs-kubeadm/
+│   └── kubernetes-platform-comparison/
 ├── infrastructure/
 │   ├── modules/
 │   │   ├── vpc/
 │   │   ├── ec2/
-│   │   └── k3s/
+│   │   ├── k3s/
+│   │   └── helm-release/
 │   └── live/
 │       ├── root.hcl
 │       ├── _common/
 │       │   ├── vpc.hcl
 │       │   ├── ec2.hcl
-│       │   └── k3s.hcl
+│       │   ├── k3s.hcl
+│       │   ├── traefik.hcl
+│       │   ├── cert-manager.hcl
+│       │   └── argocd.hcl
 │       └── dev/us-east-1/
 │           ├── vpc/terragrunt.hcl
 │           ├── ec2/terragrunt.hcl
-│           └── k3s/terragrunt.hcl
-├── kubernetes/helm/
-│   ├── traefik/
-│   ├── cert-manager/
-│   └── argocd/
-└── scripts/
-    ├── kubeconfig.sh
-    └── platform.sh
+│           ├── k3s/terragrunt.hcl
+│           ├── traefik/terragrunt.hcl
+│           ├── cert-manager/terragrunt.hcl
+│           └── argocd/terragrunt.hcl
+└── kubernetes/helm/
+    ├── traefik/values.yaml
+    ├── cert-manager/values.yaml
+    └── argocd/values.yaml
 ```
-
-See [`docs/README.md`](docs/README.md) for the repository architecture and scaling rules.
-
-## Module boundaries
-
-### VPC
-
-Owns networking only.
-
-### EC2
-
-Owns AWS compute infrastructure:
-
-- Amazon Linux 2023 AMI resolution
-- EC2 instance
-- encrypted gp3 root volume
-- IMDSv2
-- Elastic IP
-- security group/rules
-- IAM role and instance profile
-- SSM managed-instance permissions
-
-It contains **no K3s installation logic**.
-
-### K3s
-
-Consumes the EC2 `instance_id` and `public_ip` outputs and manages K3s through an `AWS-RunShellScript` SSM association. Changing the K3s version updates K3s independently instead of changing EC2 user data and forcing an instance replacement.
-
-The AWS provider supports waiting for an SSM association to reach `Success`; this module uses that behavior so a failed K3s bootstrap fails the infrastructure apply rather than silently continuing.
 
 ## Prerequisites
 
-- AWS CLI
-- Terraform `>= 1.8.0`
-- Terragrunt `1.x`
-- Helm 3
-- kubectl
-- curl
-- git
-- AWS permissions for VPC, EC2, IAM, S3 and Systems Manager
+Required for deployment:
 
-```bash
-make check
-aws sts get-caller-identity
-```
+- Terragrunt `1.x`
+- Terraform `>= 1.8.0` as the Terragrunt execution engine
+- AWS credentials with the permissions required by the stack
+- network access to Terraform/Helm provider registries and upstream Helm chart repositories
+
+`kubectl` is optional for post-deployment validation. The Helm CLI is not required for normal deployment.
 
 ## Pinned versions
 
 - K3s `v1.36.4+k3s1`
+- HashiCorp Helm provider `3.2.0`
 - Traefik Helm chart `41.4.0`
 - Traefik Proxy `v3.7.12`
-- cert-manager `v1.21.1`
+- cert-manager chart/application `v1.21.1`
 - Argo CD Helm chart `10.8.1`
-- Argo CD `v3.5.2`
+- Argo CD application `v3.5.2`
 
 See [`VERSIONS.md`](VERSIONS.md).
 
-## Deploy
+## Deploy with Terragrunt only
 
-All operator commands are run from the repository root. `ENV` and `REGION` are parameters instead of hard-coded traversal paths.
+Choose the environment/region directory:
 
 ```bash
-make bootstrap ENV=dev REGION=us-east-1
-make init      ENV=dev REGION=us-east-1
-make plan      ENV=dev REGION=us-east-1
-make apply     ENV=dev REGION=us-east-1
+cd infrastructure/live/dev/us-east-1
 ```
 
-The apply order is:
+Bootstrap the remote S3 backend from one unit:
+
+```bash
+cd vpc
+terragrunt backend bootstrap
+cd ..
+```
+
+Initialize all units:
+
+```bash
+terragrunt run --all init
+```
+
+Review the stack:
+
+```bash
+terragrunt run --all plan
+```
+
+Apply the complete dependency graph:
+
+```bash
+terragrunt run --all apply
+```
+
+Terragrunt applies dependencies in order:
 
 ```text
-VPC -> EC2 -> K3s
+VPC -> EC2 -> K3s -> Traefik -> cert-manager -> Argo CD
 ```
 
-You can review/apply each lifecycle separately:
+On a brand-new environment, downstream Kubernetes units use mock dependency outputs for `init`/`plan` because the K3s API does not exist yet. After the first successful apply, repeat `terragrunt run --all plan` to get a fully live refresh of every Helm release.
+
+## Work on one component
+
+Each lifecycle can still be reviewed independently:
 
 ```bash
-make vpc-plan ENV=dev REGION=us-east-1
-make ec2-plan ENV=dev REGION=us-east-1
-make k3s-plan ENV=dev REGION=us-east-1
-
-make vpc-apply ENV=dev REGION=us-east-1
-make ec2-apply ENV=dev REGION=us-east-1
-make k3s-apply ENV=dev REGION=us-east-1
+cd infrastructure/live/dev/us-east-1/ec2
+terragrunt plan
+terragrunt apply
 ```
 
-The Kubernetes API defaults to the current operator public `/32`. Override it for office/VPN access:
+Examples:
+
+```bash
+cd ../k3s && terragrunt plan
+cd ../traefik && terragrunt plan
+cd ../cert-manager && terragrunt plan
+cd ../argocd && terragrunt plan
+```
+
+Do not call Terraform directly; Terragrunt supplies the parent configuration, remote state, provider generation, shared inputs and dependencies.
+
+## Kubernetes API access
+
+The API defaults to the current operator public `/32`. Override it before planning/applying when office/VPN access is required:
 
 ```bash
 export TG_OPERATOR_CIDR="203.0.113.0/24"
-make plan ENV=dev REGION=us-east-1
 ```
 
-## Retrieve kubeconfig
+## Retrieve kubeconfig through Terragrunt
+
+K3s publishes the API endpoint and base64 client material after the SSM installation association succeeds. The K3s Terraform unit assembles a kubeconfig output.
 
 ```bash
-make kubeconfig ENV=dev REGION=us-east-1
+cd infrastructure/live/dev/us-east-1/k3s
+mkdir -p ~/.kube
+terragrunt output -raw kubeconfig > ~/.kube/k3s-dev-us-east-1.yaml
+chmod 600 ~/.kube/k3s-dev-us-east-1.yaml
+```
+
+Optional verification:
+
+```bash
 export KUBECONFIG=~/.kube/k3s-dev-us-east-1.yaml
 kubectl get nodes -o wide
+kubectl get pods -A
 ```
 
-The helper reads EC2 identity/network outputs from the EC2 state and requires the K3s state to exist before retrieving `/etc/rancher/k3s/k3s.yaml` over SSM.
+The kubeconfig output is sensitive. Remote Terraform state must be treated as sensitive data and access to the S3 state bucket must be tightly controlled.
 
-## Deploy Kubernetes platform add-ons
+## Platform add-ons
+
+No `helm install` or shell installer is used. Terragrunt drives the reusable `infrastructure/modules/helm-release` module, which uses HashiCorp Helm provider `3.2.0`.
+
+The source values remain reviewable under `kubernetes/helm/*/values.yaml`, while chart identity/version live in `infrastructure/live/_common/*.hcl`.
+
+Apply an individual release with Terragrunt:
 
 ```bash
-make platform-install
-make platform-test
+cd infrastructure/live/dev/us-east-1/traefik
+terragrunt plan
+terragrunt apply
 ```
 
-Installation order:
+The same pattern applies to `cert-manager` and `argocd`.
 
-```text
-Traefik -> cert-manager -> Argo CD
-```
+## Outputs
 
-Verify:
+From any unit:
 
 ```bash
-kubectl get nodes -o wide
-kubectl get ingressclass
-helm -n traefik list
-helm -n cert-manager list
-helm -n argocd list
-kubectl -n traefik get pods,svc
-kubectl -n cert-manager get pods
-kubectl -n argocd get pods
+terragrunt output
 ```
 
-## Outputs and node access
+Across the region stack:
 
 ```bash
-make outputs ENV=dev REGION=us-east-1
-make ssm     ENV=dev REGION=us-east-1
+cd infrastructure/live/dev/us-east-1
+terragrunt run --all output
 ```
-
-There is no inbound SSH rule or EC2 key-pair dependency.
-
-## Existing state warning
-
-An earlier revision used one combined `k3s-ec2` module/state. If that revision has already provisioned a real environment, migrate the existing resources into the new EC2 state before applying this split. Do not run the new K3s state against an old combined state without reviewing/migrating it first. See `docs/README.md`.
-
-New deployments require no state migration.
 
 ## Destroy
 
+Destroy the whole graph through Terragrunt:
+
 ```bash
-make platform-uninstall
-make destroy ENV=dev REGION=us-east-1
+cd infrastructure/live/dev/us-east-1
+terragrunt run --all destroy
 ```
 
-Destroy order is K3s -> EC2 -> VPC.
+Terragrunt uses the dependency graph to destroy dependents before dependencies.
+
+## Existing-state migration
+
+Two historical layouts may require migration before applying this revision:
+
+1. An older revision used a combined `k3s-ec2` Terraform state. Existing EC2 resources must be migrated/imported into the split EC2 state before applying the current stack.
+2. An older revision installed Traefik, cert-manager and Argo CD outside Terraform state. If those Helm releases exist, import them into their Terragrunt unit states before applying:
+
+```bash
+cd infrastructure/live/dev/us-east-1/traefik
+terragrunt import helm_release.this traefik/traefik
+
+cd ../cert-manager
+terragrunt import helm_release.this cert-manager/cert-manager
+
+cd ../argocd
+terragrunt import helm_release.this argocd/argocd
+```
+
+Always review `terragrunt plan` after import because this revision manages the official upstream charts directly instead of local wrapper charts.
 
 ## Security notes
 
 - Kubernetes API `6443` is restricted to `TG_OPERATOR_CIDR`.
-- SSH `22` is not exposed; use SSM.
+- SSH `22` is not exposed; the node uses AWS Systems Manager.
 - IMDSv2 is required.
 - EBS is encrypted.
+- K3s kubeconfig credentials are stored in scoped SSM SecureString parameters and sensitive Terraform state.
 - Traefik dashboard is not public by default.
 - Never commit kubeconfig, Terraform state, cloud credentials, Cloudflare tokens or private keys.
+
+For the detailed command model and state/dependency explanation, see [`docs/terragrunt-workflow/README.md`](docs/terragrunt-workflow/README.md).

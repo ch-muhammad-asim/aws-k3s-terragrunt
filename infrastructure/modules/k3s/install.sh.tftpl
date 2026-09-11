@@ -7,6 +7,13 @@ echo "[k3s-bootstrap] target version: ${k3s_version}"
 
 dnf install -y curl jq
 
+# Amazon Linux 2023 ships with AWS CLI v2. It is used only from the managed
+# node to publish the K3s client material into scoped SSM parameters.
+command -v aws >/dev/null 2>&1 || {
+  echo "[k3s-bootstrap] aws CLI is required but was not found" >&2
+  exit 1
+}
+
 curl -sfL https://get.k3s.io | \
   INSTALL_K3S_VERSION="${k3s_version}" \
   sh -s - server \
@@ -19,6 +26,18 @@ for i in $(seq 1 60); do
   if systemctl is-active --quiet k3s && /usr/local/bin/k3s kubectl get node >/dev/null 2>&1; then
     echo "[k3s-bootstrap] k3s is ready"
     /usr/local/bin/k3s --version
+
+    KUBE_JSON=$(/usr/local/bin/k3s kubectl config view --raw --kubeconfig /etc/rancher/k3s/k3s.yaml -o json)
+    CLUSTER_CA_DATA=$(printf '%s' "$KUBE_JSON" | jq -r '.clusters[0].cluster["certificate-authority-data"]')
+    CLIENT_CERT_DATA=$(printf '%s' "$KUBE_JSON" | jq -r '.users[0].user["client-certificate-data"]')
+    CLIENT_KEY_DATA=$(printf '%s' "$KUBE_JSON" | jq -r '.users[0].user["client-key-data"]')
+
+    aws ssm put-parameter --region "${region}" --name "${kubernetes_host_parameter}" --type String --overwrite --value "https://${public_ip}:6443" >/dev/null
+    aws ssm put-parameter --region "${region}" --name "${cluster_ca_parameter}" --type SecureString --overwrite --value "$CLUSTER_CA_DATA" >/dev/null
+    aws ssm put-parameter --region "${region}" --name "${client_certificate_parameter}" --type SecureString --overwrite --value "$CLIENT_CERT_DATA" >/dev/null
+    aws ssm put-parameter --region "${region}" --name "${client_key_parameter}" --type SecureString --overwrite --value "$CLIENT_KEY_DATA" >/dev/null
+
+    echo "[k3s-bootstrap] kubeconfig material published to SSM Parameter Store"
     exit 0
   fi
   sleep 5

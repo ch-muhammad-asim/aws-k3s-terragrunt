@@ -1,22 +1,17 @@
-# cert-manager Helm chart/application: v1.21.1
-# K3s target: v1.36.4+k3s1
-#
-# Current cert-manager uses crds.enabled/crds.keep. The legacy installCRDs option
-# is deprecated and intentionally not used here.
-certManager:
-  crds:
-    enabled: true
-    keep: true
+# Upstream cert-manager Helm chart/application: v1.21.1
+# Managed by infrastructure/live/*/*/cert-manager through Terragrunt.
+crds:
+  enabled: true
+  keep: true
 
-  # Single-node K3s baseline. Scale these components for an HA cluster.
+# Single-node K3s baseline. Scale these components for an HA cluster.
+replicaCount: 1
+webhook:
   replicaCount: 1
-  webhook:
-    replicaCount: 1
-  cainjector:
-    replicaCount: 1
-  startupapicheck:
-    enabled: true
+cainjector:
+  replicaCount: 1
+startupapicheck:
+  enabled: true
 
-  # Keep the small cluster lean. Enable this when a Prometheus stack exists.
-  prometheus:
-    enabled: false
+prometheus:
+  enabled: false
