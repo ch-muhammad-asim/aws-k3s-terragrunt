@@ -5,7 +5,7 @@ locals {
     clusters = [{
       name = var.cluster_name
       cluster = {
-        server                     = data.aws_ssm_parameter.kubernetes_host.value
+        server                       = data.aws_ssm_parameter.kubernetes_host.value
         "certificate-authority-data" = data.aws_ssm_parameter.kubeconfig_credentials["cluster_ca"].value
       }
     }]
@@ -33,8 +33,8 @@ output "k3s_version" {
 }
 
 output "kubernetes_api" {
-  description = "Kubernetes API endpoint."
-  value       = data.aws_ssm_parameter.kubernetes_host.value
+  description = "Kubernetes API endpoint. This value is intentionally non-sensitive; only the client credentials remain sensitive."
+  value       = nonsensitive(data.aws_ssm_parameter.kubernetes_host.value)
 }
 
 output "cluster_ca_certificate_data" {
