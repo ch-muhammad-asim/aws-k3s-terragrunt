@@ -1,5 +1,5 @@
 variable "name" {
-  description = "Name used for the EC2 node and supporting resources."
+  description = "Base name used for EC2 nodes and supporting resources."
   type        = string
 }
 
@@ -19,24 +19,53 @@ variable "vpc_id" {
 }
 
 variable "subnet_id" {
-  description = "Subnet ID for the EC2 instance."
+  description = "Default subnet ID used by EC2 instances unless overridden per instance."
   type        = string
 }
 
 variable "instance_type" {
-  description = "EC2 instance type."
+  description = "Default EC2 instance type used unless overridden per instance."
   type        = string
   default     = "t3.medium"
 }
 
 variable "root_volume_size" {
-  description = "Root EBS volume size in GiB."
+  description = "Default root EBS volume size in GiB used unless overridden per instance."
   type        = number
   default     = 30
 
   validation {
     condition     = var.root_volume_size >= 20
     error_message = "root_volume_size must be at least 20 GiB."
+  }
+}
+
+variable "primary_instance_key" {
+  description = "Key in var.instances exposed through the backwards-compatible singular outputs consumed by the current K3s unit."
+  type        = string
+  default     = "primary"
+}
+
+variable "instances" {
+  description = "Map of EC2 nodes created with for_each. Optional values inherit the module-level defaults."
+  type = map(object({
+    name             = optional(string)
+    instance_type    = optional(string)
+    subnet_id        = optional(string)
+    root_volume_size = optional(number)
+    tags             = optional(map(string), {})
+  }))
+
+  default = {
+    primary = {}
+  }
+
+  validation {
+    condition = alltrue([
+      for instance in values(var.instances) :
+      try(instance.root_volume_size, null) == null || try(instance.root_volume_size, 0) >= 20
+    ])
+    error_message = "Each per-instance root_volume_size override must be at least 20 GiB."
   }
 }
 
@@ -47,7 +76,7 @@ variable "ami_ssm_parameter_name" {
 }
 
 variable "ingress_rules" {
-  description = "IPv4 ingress rules applied to the EC2 node security group."
+  description = "IPv4 ingress rules applied to the shared EC2 node security group."
   type = map(object({
     description = string
     from_port   = number
@@ -59,7 +88,7 @@ variable "ingress_rules" {
 }
 
 variable "additional_iam_policy_arns" {
-  description = "Additional managed IAM policies to attach to the EC2 instance role."
+  description = "Additional managed IAM policies to attach to the shared EC2 instance role."
   type        = set(string)
   default     = []
 }
