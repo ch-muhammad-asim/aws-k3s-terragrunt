@@ -48,33 +48,43 @@ Start in the region stack:
 cd infrastructure/live/dev/us-east-1
 ```
 
-Bootstrap the remote-state bucket from one unit:
+### Brand-new backend
+
+Terragrunt 1.x requires backend provisioning to be explicitly enabled. If the S3 bucket in `root.hcl` does not exist yet, a plain `terragrunt run --all init` fails with `NoSuchBucket`.
+
+For the very first initialization, run:
+
+```bash
+terragrunt run --all --backend-bootstrap init
+```
+
+`--backend-bootstrap` authorizes Terragrunt to create the remote-state resources defined by the `remote_state` block before Terraform initialization. This keeps backend creation inside Terragrunt; do not create the bucket manually with AWS CLI and do not add a separate Terraform bootstrap project.
+
+Once the backend exists, use the normal lifecycle:
+
+```bash
+terragrunt run --all plan
+terragrunt run --all apply
+```
+
+An equivalent explicit Terragrunt-only bootstrap sequence is:
 
 ```bash
 cd vpc
 terragrunt backend bootstrap
 cd ..
-```
-
-Initialize all units:
-
-```bash
 terragrunt run --all init
 ```
 
-Plan:
-
-```bash
-terragrunt run --all plan
-```
-
-Apply:
-
-```bash
-terragrunt run --all apply
-```
+Use one approach or the other; the single `run --all --backend-bootstrap init` command is the recommended first-run path.
 
 Terragrunt orders the apply using dependency blocks; there is no hand-written install sequence in a Makefile or shell script.
+
+### Why the explicit flag is necessary
+
+Modern Terragrunt no longer creates remote backend infrastructure implicitly. This is intentional: creating an S3 bucket or other backend resources is a cloud-side mutation, so Terragrunt now requires explicit opt-in using `--backend-bootstrap` or the `TG_BACKEND_BOOTSTRAP=true` environment variable.
+
+For CI, either keep the first-run flag explicit or set the environment variable only in the bootstrap workflow. Do not enable backend bootstrap globally unless you intentionally want Terragrunt to be allowed to create/update backend infrastructure on normal runs.
 
 ### Fresh-stack planning note
 
