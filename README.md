@@ -32,12 +32,12 @@ Argo CD
 Every box is an independent Terragrunt unit with its own Terraform state. Terragrunt dependency blocks define the order.
 
 - `vpc` owns AWS networking.
-- `ec2` owns EC2, EIP, IAM/SSM, security groups and EBS.
+- `ec2` owns EC2, EIP, IAM/SSM, security groups and EBS. EC2 instances and their EIPs are created from a map with Terraform `for_each` so additional nodes have stable key-based resource addresses.
 - `k3s` installs/upgrades K3s through AWS Systems Manager without replacing EC2.
 - `traefik`, `cert-manager` and `argocd` use a reusable Terraform `helm_release` module, but are planned/applied/destroyed through Terragrunt.
 - K3s publishes the Kubernetes API/client material to scoped SSM Parameter Store keys. Downstream Terragrunt units consume the resulting K3s outputs, so no kubeconfig bootstrap script is required for deployment.
 
-The current compute profile is a single EC2 K3s server/worker. It is intentionally non-HA; the module/state boundaries allow later evolution toward multi-node HA.
+The current compute profile is a single EC2 K3s server/worker. It is intentionally non-HA; the module/state boundaries and map-driven EC2 model allow later evolution toward multi-node HA.
 
 ## Repository layout
 
@@ -184,6 +184,50 @@ terragrunt backend bootstrap
 cd ..
 terragrunt run --all init
 ```
+
+## EC2 nodes use `for_each`
+
+The EC2 module does not use a singleton resource or `count`. It creates EC2 instances, EIPs and EIP associations from the `instances` map using Terraform `for_each`.
+
+The current default intentionally contains one node:
+
+```hcl
+instances = {
+  primary = {}
+}
+```
+
+The key becomes the stable Terraform resource address, for example:
+
+```text
+aws_instance.this["primary"]
+aws_eip.this["primary"]
+aws_eip_association.this["primary"]
+```
+
+Additional compute can be declared without changing the resource model:
+
+```hcl
+instances = {
+  primary = {}
+
+  worker-1 = {
+    name          = "k3s-dev-us-east-1-worker-1"
+    instance_type = "t3.medium"
+  }
+
+  worker-2 = {
+    name          = "k3s-dev-us-east-1-worker-2"
+    instance_type = "t3.medium"
+  }
+}
+```
+
+Per-node `name`, `instance_type`, `subnet_id`, `root_volume_size` and `tags` may be overridden; omitted values inherit the module defaults.
+
+The current K3s unit still consumes the singular outputs for `primary_instance_key = "primary"`, so **adding more EC2 map entries only creates compute; it does not yet join those additional machines to K3s**. Multi-server/agent K3s bootstrap should be implemented as a separate cluster-topology change rather than silently turning extra EC2 instances into cluster members.
+
+For environments that already created the old singleton EC2/EIP resources, Terraform `moved` blocks migrate the existing state addresses to the `"primary"` `for_each` addresses. Review `terragrunt plan` before applying: the expected result is an address move, not EC2/EIP replacement, when no other settings changed.
 
 ## Work on one component
 
