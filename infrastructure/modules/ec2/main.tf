@@ -18,10 +18,10 @@ locals {
         try(instance.name, null),
         key == var.primary_instance_key ? var.name : "${var.name}-${key}",
       )
-      instance_type   = coalesce(try(instance.instance_type, null), var.instance_type)
-      subnet_id       = coalesce(try(instance.subnet_id, null), var.subnet_id)
+      instance_type    = coalesce(try(instance.instance_type, null), var.instance_type)
+      subnet_id        = coalesce(try(instance.subnet_id, null), var.subnet_id)
       root_volume_size = coalesce(try(instance.root_volume_size, null), var.root_volume_size)
-      tags            = merge(try(instance.tags, {}), {})
+      tags             = coalesce(try(instance.tags, null), {})
     }
   }
 }
