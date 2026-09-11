@@ -8,13 +8,48 @@ locals {
   tags = merge(var.tags, {
     Name = var.name
   })
+
+  # Keep EC2 creation map-driven so the module can grow from the current
+  # single-node profile without changing the resource model from count/singleton
+  # addresses later. The primary entry preserves the existing node name.
+  instances = {
+    for key, instance in var.instances : key => {
+      name = coalesce(
+        try(instance.name, null),
+        key == var.primary_instance_key ? var.name : "${var.name}-${key}",
+      )
+      instance_type   = coalesce(try(instance.instance_type, null), var.instance_type)
+      subnet_id       = coalesce(try(instance.subnet_id, null), var.subnet_id)
+      root_volume_size = coalesce(try(instance.root_volume_size, null), var.root_volume_size)
+      tags            = merge(try(instance.tags, {}), {})
+    }
+  }
+}
+
+# Preserve existing singleton state addresses when upgrading an already-applied
+# environment to the for_each resource model.
+moved {
+  from = aws_eip.this
+  to   = aws_eip.this["primary"]
+}
+
+moved {
+  from = aws_instance.this
+  to   = aws_instance.this["primary"]
+}
+
+moved {
+  from = aws_eip_association.this
+  to   = aws_eip_association.this["primary"]
 }
 
 resource "aws_eip" "this" {
+  for_each = local.instances
+
   domain = "vpc"
 
-  tags = merge(local.tags, {
-    Name = "${var.name}-eip"
+  tags = merge(local.tags, each.value.tags, {
+    Name = "${each.value.name}-eip"
   })
 }
 
@@ -87,18 +122,20 @@ resource "aws_vpc_security_group_egress_rule" "all" {
 }
 
 resource "aws_instance" "this" {
+  for_each = local.instances
+
   ami                    = data.aws_ssm_parameter.ami.value
-  instance_type          = var.instance_type
-  subnet_id              = var.subnet_id
+  instance_type          = each.value.instance_type
+  subnet_id              = each.value.subnet_id
   vpc_security_group_ids = [aws_security_group.this.id]
   iam_instance_profile   = aws_iam_instance_profile.this.name
 
-  # A stable public endpoint is supplied by the EIP association below.
+  # A stable public endpoint is supplied by the per-node EIP association below.
   associate_public_ip_address = false
 
   root_block_device {
     volume_type           = "gp3"
-    volume_size           = var.root_volume_size
+    volume_size           = each.value.root_volume_size
     encrypted             = true
     delete_on_termination = true
   }
@@ -109,13 +146,17 @@ resource "aws_instance" "this" {
     http_put_response_hop_limit = 1
   }
 
-  tags = local.tags
+  tags = merge(local.tags, each.value.tags, {
+    Name = each.value.name
+  })
 
-  # Ensure SSM permissions exist before the instance boots and registers.
+  # Ensure SSM permissions exist before instances boot and register.
   depends_on = [aws_iam_role_policy_attachment.ssm]
 }
 
 resource "aws_eip_association" "this" {
-  instance_id   = aws_instance.this.id
-  allocation_id = aws_eip.this.id
+  for_each = local.instances
+
+  instance_id   = aws_instance.this[each.key].id
+  allocation_id = aws_eip.this[each.key].id
 }
