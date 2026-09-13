@@ -18,9 +18,12 @@ inputs = {
   root_volume_size     = 30
   primary_instance_key = "primary"
 
+  # Canonical's public SSM parameter always resolves the latest published
+  # Ubuntu Server 26.04 LTS AMD64 gp3 AMI in the active AWS region.
+  ami_ssm_parameter_name = "/aws/service/canonical/ubuntu/server/26.04/stable/current/amd64/hvm/ebs-gp3/ami-id"
+
   # Deletion protection. Clear these and apply once before any run that has to
-  # replace or destroy the node, including a bootstrap change that triggers
-  # user_data_replace_on_change.
+  # replace or destroy the node, including an OS/AMI or bootstrap change.
   enable_termination_protection = true
   enable_stop_protection        = true
 
