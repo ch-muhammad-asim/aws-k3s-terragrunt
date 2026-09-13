@@ -6,6 +6,7 @@ The repository separates AWS networking, EC2 compute, K3s configuration and Kube
 
 - [`ai-factory/README.md`](ai-factory/README.md) - detailed AI Factory guide: what an AI factory is, where Kubernetes/K3s fits, GPU/platform architecture, pros/cons, distribution choices, repository evolution path, and current official source links.
 - [`ai-factory/kubernetes-distribution-recommendation.md`](ai-factory/kubernetes-distribution-recommendation.md) - focused research on the recommended Kubernetes distribution for a self-hosted production AI Factory, including RKE2 vs upstream Kubernetes vs OpenShift vs K3s, NVIDIA support matrices, HA design, and the Ubuntu 24.04 validation rationale.
+- [`ai-factory/inference-workloads.md`](ai-factory/inference-workloads.md) - explains AI inference, how Kubernetes serves trained models, host-GPU integration, vLLM/KServe/KubeRay patterns, and why Kubernetes 1.36 is sufficient for the current production AI Factory baseline.
 - [`terragrunt-workflow/README.md`](terragrunt-workflow/README.md) - canonical deployment workflow: backend bootstrap, run-all DAG, component operations, kubeconfig output, state/security and migration.
 - [`kubernetes-platform-comparison/README.md`](kubernetes-platform-comparison/README.md) - central comparison of K3s, RKE2, Talos Linux, k0s, MicroK8s, kubeadm, k3d and Compose.
 - [`k3s-vs-kubeadm/README.md`](k3s-vs-kubeadm/README.md) - K3s vs kubeadm research, HA/non-HA, K3s-in-Docker and distribution choices.
