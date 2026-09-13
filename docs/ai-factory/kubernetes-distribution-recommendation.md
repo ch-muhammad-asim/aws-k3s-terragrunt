@@ -1,6 +1,6 @@
 # Kubernetes distribution recommendation for an AI Factory
 
-> **Research review:** 2026-09-13. Checked against current NVIDIA AI Enterprise 8.2, NVIDIA GPU Operator, NVIDIA Enterprise Reference Architecture, and RKE2 documentation.
+> **Research review:** 2026-09-13. Checked against current NVIDIA AI Enterprise 8.2, NVIDIA GPU Operator, NVIDIA Enterprise Reference Architecture, RKE2, KServe, vLLM and Kubernetes 1.36 documentation.
 
 ## Recommendation
 
@@ -14,7 +14,7 @@ Recommended production baseline today:
 Ubuntu Server 24.04 LTS
         |
         v
-RKE2
+RKE2 / Kubernetes 1.36.x
         |
         v
 containerd
@@ -22,7 +22,7 @@ containerd
         +-- NVIDIA GPU Operator
         +-- NVIDIA Network Operator when required
         +-- Kueue or Run:ai
-        +-- KServe / KubeRay / NIM workloads
+        +-- vLLM / KServe / KubeRay / NIM workloads
         +-- Prometheus / Grafana / DCGM
         +-- Argo CD
 ```
@@ -118,6 +118,73 @@ Official references:
 RKE2 has explicit documentation for deploying NVIDIA GPU Operator with its `containerd` layout.
 
 - RKE2 GPU Operator guide: <https://docs.rke2.io/add-ons/gpu_operators>
+
+## Why Kubernetes 1.36 is the current AI Factory baseline
+
+For this project, **Kubernetes 1.36.x is sufficient for production AI inference and is the preferred conservative baseline today**.
+
+The main reason is that it sits inside the current support overlap we care about:
+
+| Capability / platform | Kubernetes 1.36 | Kubernetes 1.37 |
+|---|---:|---:|
+| NVIDIA GPU Operator on current RKE2 matrix | Yes | Yes |
+| NVIDIA AI Enterprise 8.2 RKE2 matrix | **Yes** | Not currently listed |
+| KServe 0.16 `LLMInferenceService` minimum | Yes (`1.32+`) | Yes |
+| vLLM Kubernetes deployment model | Yes | Yes |
+| Standard `nvidia.com/gpu` scheduling | Yes | Yes |
+| Dynamic Resource Allocation foundation | **Stable** | Stable + newer enhancements |
+| Production inference prerequisite | **Yes** | No additional requirement |
+
+Kubernetes 1.36 already provides everything needed to run the inference layer of the AI Factory:
+
+- Deployments and Services for long-running inference APIs;
+- readiness, liveness and startup probes;
+- rolling updates and self-healing;
+- standard GPU scheduling through `nvidia.com/gpu`;
+- NVIDIA GPU Operator compatibility;
+- stable Dynamic Resource Allocation foundation;
+- enough Kubernetes API level for KServe generative-AI serving;
+- support for vLLM, KServe, KubeRay/Ray Serve and similar runtimes;
+- storage, networking, RBAC, quotas and observability integration.
+
+A basic GPU-backed inference request remains straightforward:
+
+```yaml
+resources:
+  limits:
+    nvidia.com/gpu: 1
+```
+
+Kubernetes schedules the Pod on a GPU-capable worker. The inference runtime — for example vLLM, KServe, Ray Serve, Triton or NIM — loads the model into RAM/VRAM and performs the actual model inference.
+
+### What Kubernetes 1.37 adds
+
+Kubernetes 1.37 contains useful accelerator-management and DRA improvements. Those are valuable for future sophisticated device allocation, but they do **not** make 1.36 incapable of AI inference.
+
+Therefore:
+
+```text
+Need: production AI / LLM inference
+               |
+               v
+      Kubernetes 1.36.x
+               |
+          sufficient today
+               |
+   +-----------+-----------+
+   |                       |
+GPU Operator              DRA
+nvidia.com/gpu        stable foundation
+   |                       |
+   +-----------+-----------+
+               |
+       inference runtime
+   vLLM / KServe / KubeRay
+```
+
+Do not upgrade to Kubernetes 1.37 only because the workload is called "AI." Move to 1.37 when the chosen RKE2 release and the complete driver, GPU Operator, serving, networking and observability stack are validated together, or when a specific 1.37 feature solves a real requirement.
+
+Detailed inference guidance is documented in [`inference-workloads.md`](inference-workloads.md).
 
 ## Using a physical host GPU with Kubernetes
 
@@ -367,6 +434,7 @@ K3s profile
 
 RKE2 AI Factory profile
   -> production GPU platform
+  -> Kubernetes 1.36.x baseline
   -> HA control plane
   -> dedicated GPU workers
   -> NVIDIA enterprise-oriented stack
@@ -376,23 +444,26 @@ Suggested evolution:
 
 1. Keep the current Ubuntu + K3s platform for general Kubernetes development.
 2. Build and validate a three-server HA topology.
-3. Add an RKE2 AI Factory profile based on Ubuntu 24.04 LTS.
+3. Add an RKE2 AI Factory profile based on Ubuntu 24.04 LTS and Kubernetes 1.36.x.
 4. Add dedicated GPU agents and GPU Operator.
-5. Add Kueue or Run:ai, DCGM/Prometheus, and model-serving components only when needed.
-6. Add Network Operator, RDMA, GPUDirect RDMA and high-throughput shared storage only when distributed workloads require them.
+5. Start inference simply with vLLM behind a Kubernetes Service.
+6. Add KServe or KubeRay when model lifecycle, autoscaling or distributed serving requirements justify them.
+7. Add Kueue or Run:ai, DCGM/Prometheus, and model-serving components only when needed.
+8. Add Network Operator, RDMA, GPUDirect RDMA and high-throughput shared storage only when distributed workloads require them.
+9. Move to Kubernetes 1.37 after the complete selected stack is validated together and a 1.37 capability provides a real operational benefit.
 
 ## Final decision
 
 For this repository, the recommended direction is:
 
-> **Keep K3s as the lightweight/default Kubernetes profile, and use RKE2 as the future production AI Factory profile.**
+> **Keep K3s as the lightweight/default Kubernetes profile, and use RKE2 with Kubernetes 1.36.x as the current production AI Factory baseline.**
 
 Recommended production AI Factory baseline:
 
 ```text
 Ubuntu Server 24.04 LTS
 +
-RKE2
+RKE2 / Kubernetes 1.36.x
 +
 3 CPU control-plane/etcd servers
 +
@@ -402,7 +473,9 @@ NVIDIA GPU Operator
 +
 Network Operator only where required
 +
-Kueue or Run:ai
+vLLM for the first inference service
++
+Kueue or Run:ai when scheduling/quotas require it
 +
 KServe / KubeRay / NIM according to workload
 +
@@ -415,6 +488,10 @@ For GPU access, remember the licensing boundary:
 
 > **Owning and using a physical NVIDIA GPU with Kubernetes does not require NVIDIA AI Enterprise.** Kubernetes still needs the NVIDIA driver/runtime/device integration, and GPU Operator is the recommended automation layer for production clusters.
 
+For inference, remember the version boundary:
+
+> **Kubernetes 1.36 already supports the production inference architecture we need. Kubernetes 1.37 is an upgrade target, not a prerequisite.**
+
 ## Official sources
 
 - NVIDIA AI Enterprise 8.2 support matrix: <https://docs.nvidia.com/ai-enterprise/release-8/latest/support/support-matrix-8/8.2.html>
@@ -422,6 +499,11 @@ For GPU access, remember the licensing boundary:
 - NVIDIA GPU Operator documentation: <https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/>
 - NVIDIA Network Operator platform support: <https://docs.nvidia.com/networking/display/kubernetes2670/platform-support.html>
 - NVIDIA Enterprise Reference Architecture: <https://docs.nvidia.com/enterprise-reference-architectures/enterprise-rag-deployment-guide/latest/enterprise-ra-overview.html>
+- Kubernetes Dynamic Resource Allocation: <https://kubernetes.io/docs/concepts/resource-management/dynamic-resource-allocation/>
+- Kubernetes 1.36 DRA updates: <https://kubernetes.io/blog/2026/05/07/kubernetes-v1-36-dra-136-updates/>
+- Kubernetes 1.36 release: <https://kubernetes.io/blog/2026/04/22/kubernetes-v1-36-release/>
+- KServe LLMInferenceService requirements: <https://kserve.github.io/website/docs/0.16/admin-guide/kubernetes-deployment-llmisvc>
+- vLLM on Kubernetes: <https://docs.vllm.ai/en/latest/deployment/k8s/>
 - RKE2: <https://docs.rke2.io/>
 - RKE2 HA: <https://docs.rke2.io/install/ha>
 - RKE2 embedded datastore: <https://docs.rke2.io/datastore/embedded>
