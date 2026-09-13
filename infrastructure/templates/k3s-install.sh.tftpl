@@ -1,34 +1,48 @@
 #!/usr/bin/env bash
 # K3s node bootstrap. Rendered by Terragrunt and delivered through EC2 user data,
-# so the node converges during first boot without Systems Manager Run Command,
-# SSH, or any operator-side provisioning step.
+# so the node converges during first boot without SSH or operator-side scripting.
 set -euo pipefail
 
 exec > >(tee /var/log/k3s-bootstrap.log) 2>&1
 
+export DEBIAN_FRONTEND=noninteractive
+
 echo "[k3s-bootstrap] target version: ${k3s_version}"
+echo "[k3s-bootstrap] preparing Ubuntu host"
 
-# Amazon Linux 2023 preinstalls curl-minimal, which owns /usr/bin/curl and
-# conflicts with the full curl package. Installing curl here would abort the
-# whole bootstrap, so only genuinely missing packages are installed.
-dnf install -y jq
+apt-get update -y
+apt-get install -y --no-install-recommends ca-certificates curl snapd
 
-for binary in curl jq; do
+for binary in curl systemctl; do
   command -v "$binary" >/dev/null 2>&1 || {
     echo "[k3s-bootstrap] $binary is required but was not found" >&2
     exit 1
   }
 done
 
+# Kubeconfig retrieval later uses AWS Systems Manager instead of SSH. Canonical
+# Ubuntu AWS images normally include the SSM Agent; this block also handles a
+# missing agent by installing the AWS-recommended snap package.
+if systemctl list-unit-files amazon-ssm-agent.service >/dev/null 2>&1; then
+  systemctl enable --now amazon-ssm-agent.service
+elif systemctl list-unit-files snap.amazon-ssm-agent.amazon-ssm-agent.service >/dev/null 2>&1; then
+  systemctl enable --now snap.amazon-ssm-agent.amazon-ssm-agent.service
+else
+  echo "[k3s-bootstrap] SSM Agent not found; installing the snap package"
+  snap install amazon-ssm-agent --classic
+  snap start amazon-ssm-agent
+fi
+
 # The Elastic IP is associated moments after the instance boots, so the public
 # address is discovered from IMDSv2 rather than baked in. Publishing it as a TLS
-# SAN is what lets the API server be reached from outside the VPC.
+# SAN lets the Kubernetes API be reached securely from outside the VPC.
 imds_token() {
   curl -sf -X PUT "http://169.254.169.254/latest/api/token" \
     -H "X-aws-ec2-metadata-token-ttl-seconds: 300"
 }
 
 PUBLIC_IP=""
+TOKEN=""
 for attempt in $(seq 1 30); do
   TOKEN="$(imds_token || true)"
   if [ -n "$TOKEN" ]; then
@@ -45,7 +59,7 @@ for attempt in $(seq 1 30); do
   sleep 5
 done
 
-if [ -z "$PUBLIC_IP" ]; then
+if [ -z "$PUBLIC_IP" ] || [ -z "$TOKEN" ]; then
   echo "[k3s-bootstrap] no public address was associated with this node" >&2
   exit 1
 fi
