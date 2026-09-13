@@ -119,6 +119,126 @@ RKE2 has explicit documentation for deploying NVIDIA GPU Operator with its `cont
 
 - RKE2 GPU Operator guide: <https://docs.rke2.io/add-ons/gpu_operators>
 
+## Using a physical host GPU with Kubernetes
+
+Kubernetes is still required in this project, but **NVIDIA AI Enterprise is not required just because the cluster uses a GPU that is physically installed in a host**.
+
+If the hardware is an NVIDIA GPU, Kubernetes still needs a software path that exposes that GPU to pods:
+
+```text
+Physical NVIDIA GPU
+        |
+Ubuntu host
+        |
+NVIDIA Linux driver
+        |
+RKE2 / K3s
+        |
+containerd
+        |
+NVIDIA Container Toolkit
+        |
+NVIDIA Kubernetes device plugin
+        |
+Pod requests nvidia.com/gpu: 1
+```
+
+The key distinction is:
+
+| Component | Required? | Why |
+|---|---|---|
+| Physical NVIDIA GPU | Yes, for NVIDIA acceleration | Provides the accelerator hardware |
+| NVIDIA Linux driver | Yes | Lets the Linux host communicate with the GPU |
+| Kubernetes | Yes for this project | Schedules and manages GPU workloads |
+| NVIDIA Container Toolkit | Normally yes for NVIDIA GPU containers | Lets containerd launch GPU-enabled containers |
+| NVIDIA Kubernetes device plugin | Yes for standard `nvidia.com/gpu` scheduling | Advertises GPU resources to Kubernetes |
+| NVIDIA GPU Operator | **Optional but recommended** | Automates and manages the GPU software stack across nodes |
+| NVIDIA AI Enterprise | **No** | Commercial enterprise software/support is not required for basic Kubernetes GPU use |
+
+### Manual GPU integration
+
+For a small lab or a single GPU worker, the GPU stack can be installed manually:
+
+```text
+Ubuntu
+  |
+NVIDIA driver
+  |
+NVIDIA Container Toolkit
+  |
+RKE2 / K3s + containerd
+  |
+NVIDIA device plugin
+  |
+GPU-enabled pod
+```
+
+This is a valid Kubernetes design and avoids requiring NVIDIA AI Enterprise.
+
+The trade-off is that the platform team owns driver installation, toolkit configuration, device-plugin upgrades, compatibility validation and troubleshooting on every GPU node.
+
+### Recommended AI Factory integration: GPU Operator
+
+For a production AI Factory or multiple GPU workers, use the **NVIDIA GPU Operator** instead of manually maintaining every GPU integration component.
+
+Conceptually:
+
+```text
+Ubuntu GPU worker
+        |
+RKE2 / K3s
+        |
+NVIDIA GPU Operator
+        |
+        +-- GPU driver lifecycle where configured
+        +-- NVIDIA Container Toolkit integration
+        +-- Kubernetes device plugin
+        +-- GPU feature discovery
+        +-- DCGM / GPU telemetry components
+        |
+GPU-enabled Kubernetes workloads
+```
+
+GPU Operator is separate from NVIDIA AI Enterprise. The operator itself can be used to integrate supported NVIDIA GPUs with Kubernetes without buying NVIDIA AI Enterprise.
+
+For this repository, the preferred production pattern is therefore:
+
+```text
+3 x CPU RKE2 servers
+        |
+        +-- Kubernetes control plane / etcd
+        |
+N x GPU RKE2 agents
+        |
+        +-- physical NVIDIA GPUs
+        +-- NVIDIA GPU Operator
+        |
+        +-- training
+        +-- inference
+        +-- RAG
+        +-- agents
+```
+
+Keep expensive GPUs on worker/agent nodes. Do not place GPUs on control-plane nodes unless there is a specific reason to do so.
+
+### What if the GPU is not NVIDIA?
+
+The same Kubernetes principle applies, but the NVIDIA stack is replaced by the appropriate vendor integration.
+
+```text
+Physical GPU
+   |
+Linux driver
+   |
+container runtime integration
+   |
+Kubernetes vendor device plugin / operator
+   |
+GPU-enabled pod
+```
+
+For AMD or Intel accelerators, use the supported AMD/Intel Kubernetes device-management stack rather than NVIDIA GPU Operator. The exact driver, runtime and operator combination must be validated against the GPU model, OS and Kubernetes version.
+
 ## What about K3s?
 
 K3s is still a valid AI platform.
@@ -291,10 +411,15 @@ Prometheus / Grafana / DCGM
 Argo CD
 ```
 
+For GPU access, remember the licensing boundary:
+
+> **Owning and using a physical NVIDIA GPU with Kubernetes does not require NVIDIA AI Enterprise.** Kubernetes still needs the NVIDIA driver/runtime/device integration, and GPU Operator is the recommended automation layer for production clusters.
+
 ## Official sources
 
 - NVIDIA AI Enterprise 8.2 support matrix: <https://docs.nvidia.com/ai-enterprise/release-8/latest/support/support-matrix-8/8.2.html>
 - NVIDIA GPU Operator platform support: <https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/platform-support.html>
+- NVIDIA GPU Operator documentation: <https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/>
 - NVIDIA Network Operator platform support: <https://docs.nvidia.com/networking/display/kubernetes2670/platform-support.html>
 - NVIDIA Enterprise Reference Architecture: <https://docs.nvidia.com/enterprise-reference-architectures/enterprise-rag-deployment-guide/latest/enterprise-ra-overview.html>
 - RKE2: <https://docs.rke2.io/>
