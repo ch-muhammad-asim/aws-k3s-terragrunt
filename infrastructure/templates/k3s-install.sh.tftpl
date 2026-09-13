@@ -23,9 +23,9 @@ done
 # Kubeconfig retrieval later uses AWS Systems Manager instead of SSH. Canonical
 # Ubuntu AWS images normally include the SSM Agent; this block also handles a
 # missing agent by installing the AWS-recommended snap package.
-if systemctl list-unit-files amazon-ssm-agent.service >/dev/null 2>&1; then
+if systemctl cat amazon-ssm-agent.service >/dev/null 2>&1; then
   systemctl enable --now amazon-ssm-agent.service
-elif systemctl list-unit-files snap.amazon-ssm-agent.amazon-ssm-agent.service >/dev/null 2>&1; then
+elif systemctl cat snap.amazon-ssm-agent.amazon-ssm-agent.service >/dev/null 2>&1; then
   systemctl enable --now snap.amazon-ssm-agent.amazon-ssm-agent.service
 else
   echo "[k3s-bootstrap] SSM Agent not found; installing the snap package"
