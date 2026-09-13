@@ -1,85 +1,90 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
-  <title id="title">Simple AI Factory architecture on Kubernetes</title>
-  <desc id="desc">A non-technical visual showing data and people entering an AI factory, Kubernetes K3s coordinating CPU and GPU computers, and AI services returning useful results while monitoring feeds improvements back into the system.</desc>
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f8fbff"/><stop offset="1" stop-color="#eef5ff"/></linearGradient>
-    <linearGradient id="factory" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6d5dfc"/><stop offset="1" stop-color="#4e3ec7"/></linearGradient>
-    <linearGradient id="k8s" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3388ff"/><stop offset="1" stop-color="#1568db"/></linearGradient>
-    <linearGradient id="gpu" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#72d96b"/><stop offset="1" stop-color="#39aa45"/></linearGradient>
-    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#17324d" flood-opacity=".14"/></filter>
-    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#59738b"/></marker>
-    <style>
-      .title{font:700 38px Inter,Segoe UI,Arial,sans-serif;fill:#17324d}.subtitle{font:400 18px Inter,Segoe UI,Arial,sans-serif;fill:#5e7388}.label{font:700 22px Inter,Segoe UI,Arial,sans-serif;fill:#17324d}.white{font:700 22px Inter,Segoe UI,Arial,sans-serif;fill:#fff}.small{font:500 16px Inter,Segoe UI,Arial,sans-serif;fill:#536b81}.tiny{font:500 14px Inter,Segoe UI,Arial,sans-serif;fill:#687f94}.step{font:700 18px Inter,Segoe UI,Arial,sans-serif;fill:#fff}.line{stroke:#59738b;stroke-width:4;fill:none;marker-end:url(#arrow)}
-    </style>
-  </defs>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <rect width="1600" height="900" fill="#f7fafc"/>
 
-  <rect width="1600" height="900" rx="32" fill="url(#bg)"/>
-  <text x="80" y="72" class="title">AI Factory — simple view</text>
-  <text x="80" y="106" class="subtitle">Terragrunt builds the infrastructure. Kubernetes/K3s runs the factory. GPUs do the heavy AI work.</text>
+  <text x="800" y="62" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="38" font-weight="700" fill="#102a43">AI Factory on Kubernetes (K3s)</text>
+  <text x="800" y="98" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="19" fill="#486581">From infrastructure and data to useful AI outcomes</text>
 
-  <!-- inputs -->
-  <g filter="url(#shadow)">
-    <rect x="80" y="225" width="260" height="150" rx="24" fill="#fff" stroke="#cbd9e7" stroke-width="2"/>
-    <text x="210" y="270" text-anchor="middle" class="label">People + Data</text>
-    <text x="210" y="310" text-anchor="middle" class="small">documents · images · code</text>
-    <text x="210" y="338" text-anchor="middle" class="small">business questions · feedback</text>
-  </g>
+  <rect x="55" y="180" width="285" height="190" rx="24" fill="#ffffff" stroke="#bcccdc" stroke-width="2"/>
+  <text x="197" y="225" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="25" font-weight="700" fill="#102a43">People + Data</text>
+  <text x="197" y="270" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="17" fill="#486581">People and teams</text>
+  <text x="197" y="302" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="17" fill="#486581">Documents, images and code</text>
+  <text x="197" y="334" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="17" fill="#486581">Questions and feedback</text>
 
-  <!-- factory -->
-  <g filter="url(#shadow)">
-    <rect x="430" y="170" width="735" height="430" rx="34" fill="url(#factory)"/>
-    <text x="797" y="220" text-anchor="middle" class="white" style="font-size:28px">AI Factory</text>
-    <text x="797" y="252" text-anchor="middle" class="tiny" style="fill:#ded9ff">repeatable path from data to useful AI</text>
+  <path d="M340 275 H405" stroke="#627d98" stroke-width="5" fill="none"/>
+  <polygon points="405,275 386,264 386,286" fill="#627d98"/>
 
-    <rect x="475" y="300" width="140" height="96" rx="20" fill="#8074ff" stroke="#aca5ff"/>
-    <text x="545" y="340" text-anchor="middle" class="step">1. Prepare</text><text x="545" y="368" text-anchor="middle" class="tiny" style="fill:#f2f0ff">clean / index data</text>
+  <rect x="405" y="145" width="790" height="355" rx="30" fill="#6c5ce7"/>
+  <text x="800" y="195" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700" fill="#ffffff">AI Factory</text>
+  <text x="800" y="226" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="17" fill="#ede9ff">A repeatable process that turns data into AI services</text>
 
-    <rect x="645" y="300" width="140" height="96" rx="20" fill="#8074ff" stroke="#aca5ff"/>
-    <text x="715" y="340" text-anchor="middle" class="step">2. Build</text><text x="715" y="368" text-anchor="middle" class="tiny" style="fill:#f2f0ff">train / fine-tune</text>
+  <rect x="445" y="270" width="155" height="110" rx="18" fill="#8175eb" stroke="#b9b2ff" stroke-width="2"/>
+  <text x="522" y="315" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700" fill="#ffffff">1. Prepare</text>
+  <text x="522" y="345" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="15" fill="#f3f0ff">clean and organize</text>
 
-    <rect x="815" y="300" width="140" height="96" rx="20" fill="#8074ff" stroke="#aca5ff"/>
-    <text x="885" y="340" text-anchor="middle" class="step">3. Serve</text><text x="885" y="368" text-anchor="middle" class="tiny" style="fill:#f2f0ff">APIs / agents / RAG</text>
+  <path d="M600 325 H635" stroke="#ffffff" stroke-width="4" fill="none"/>
+  <polygon points="635,325 620,316 620,334" fill="#ffffff"/>
 
-    <rect x="985" y="300" width="140" height="96" rx="20" fill="#8074ff" stroke="#aca5ff"/>
-    <text x="1055" y="340" text-anchor="middle" class="step">4. Improve</text><text x="1055" y="368" text-anchor="middle" class="tiny" style="fill:#f2f0ff">observe / feedback</text>
+  <rect x="635" y="270" width="155" height="110" rx="18" fill="#8175eb" stroke="#b9b2ff" stroke-width="2"/>
+  <text x="712" y="315" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700" fill="#ffffff">2. Build</text>
+  <text x="712" y="345" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="15" fill="#f3f0ff">train and fine-tune</text>
 
-    <path d="M615 348H645M785 348H815M955 348H985" stroke="#e6e2ff" stroke-width="4" marker-end="url(#arrow)"/>
+  <path d="M790 325 H825" stroke="#ffffff" stroke-width="4" fill="none"/>
+  <polygon points="825,325 810,316 810,334" fill="#ffffff"/>
 
-    <rect x="540" y="465" width="515" height="82" rx="22" fill="url(#k8s)" stroke="#8ec0ff" stroke-width="2"/>
-    <text x="797" y="500" text-anchor="middle" class="white">Kubernetes / K3s</text>
-    <text x="797" y="530" text-anchor="middle" class="tiny" style="fill:#dcecff">the traffic controller: schedules, scales, restarts and isolates workloads</text>
-  </g>
+  <rect x="825" y="270" width="155" height="110" rx="18" fill="#8175eb" stroke="#b9b2ff" stroke-width="2"/>
+  <text x="902" y="315" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700" fill="#ffffff">3. Serve</text>
+  <text x="902" y="345" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="15" fill="#f3f0ff">apps, APIs and agents</text>
 
-  <!-- infrastructure -->
-  <g filter="url(#shadow)">
-    <rect x="435" y="665" width="230" height="120" rx="24" fill="#fff" stroke="#cbd9e7" stroke-width="2"/>
-    <text x="550" y="705" text-anchor="middle" class="label">CPU Servers</text><text x="550" y="738" text-anchor="middle" class="small">control plane + services</text><text x="550" y="765" text-anchor="middle" class="tiny">Ubuntu 26.04 LTS</text>
+  <path d="M980 325 H1015" stroke="#ffffff" stroke-width="4" fill="none"/>
+  <polygon points="1015,325 1000,316 1000,334" fill="#ffffff"/>
 
-    <rect x="685" y="665" width="230" height="120" rx="24" fill="url(#gpu)"/>
-    <text x="800" y="705" text-anchor="middle" class="white">GPU Servers</text><text x="800" y="738" text-anchor="middle" class="small" style="fill:#efffec">AI compute</text><text x="800" y="765" text-anchor="middle" class="tiny" style="fill:#e0f9dd">NVIDIA GPU Operator</text>
+  <rect x="1015" y="270" width="140" height="110" rx="18" fill="#8175eb" stroke="#b9b2ff" stroke-width="2"/>
+  <text x="1085" y="315" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700" fill="#ffffff">4. Improve</text>
+  <text x="1085" y="345" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="15" fill="#f3f0ff">monitor and learn</text>
 
-    <rect x="935" y="665" width="230" height="120" rx="24" fill="#fff" stroke="#cbd9e7" stroke-width="2"/>
-    <text x="1050" y="705" text-anchor="middle" class="label">Storage + Network</text><text x="1050" y="738" text-anchor="middle" class="small">models · datasets · traffic</text><text x="1050" y="765" text-anchor="middle" class="tiny">EBS / object / shared storage</text>
-  </g>
+  <rect x="565" y="410" width="470" height="66" rx="18" fill="#1976d2" stroke="#9cc9ff" stroke-width="2"/>
+  <text x="800" y="440" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700" fill="#ffffff">Kubernetes / K3s</text>
+  <text x="800" y="464" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="14" fill="#e5f1ff">Schedules, scales, restarts and isolates workloads</text>
 
-  <!-- output -->
-  <g filter="url(#shadow)">
-    <rect x="1260" y="225" width="260" height="150" rx="24" fill="#fff" stroke="#cbd9e7" stroke-width="2"/>
-    <text x="1390" y="270" text-anchor="middle" class="label">Useful AI</text>
-    <text x="1390" y="310" text-anchor="middle" class="small">chat · search · agents</text>
-    <text x="1390" y="338" text-anchor="middle" class="small">predictions · automation</text>
-  </g>
+  <path d="M1195 275 H1260" stroke="#627d98" stroke-width="5" fill="none"/>
+  <polygon points="1260,275 1241,264 1241,286" fill="#627d98"/>
 
-  <!-- arrows -->
-  <path d="M340 300H430" class="line"/>
-  <path d="M1165 300H1260" class="line"/>
-  <path d="M797 600V650" class="line"/>
-  <path d="M550 650V665M800 650V665M1050 650V665" stroke="#59738b" stroke-width="3"/>
+  <rect x="1260" y="180" width="285" height="190" rx="24" fill="#ffffff" stroke="#9ae6b4" stroke-width="2"/>
+  <text x="1402" y="225" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="25" font-weight="700" fill="#22543d">Useful AI</text>
+  <text x="1402" y="270" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="17" fill="#486581">Chat assistants</text>
+  <text x="1402" y="302" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="17" fill="#486581">Search and knowledge</text>
+  <text x="1402" y="334" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="17" fill="#486581">Agents and automation</text>
 
-  <!-- terragrunt foundation -->
-  <rect x="325" y="815" width="950" height="48" rx="18" fill="#172f49"/>
-  <text x="800" y="846" text-anchor="middle" class="tiny" style="fill:#e5eff8">Terragrunt / Terraform builds the foundation: AWS network · EC2 · IAM · disks · load balancing</text>
+  <path d="M800 500 V560" stroke="#627d98" stroke-width="5" fill="none"/>
+  <polygon points="800,560 789,541 811,541" fill="#627d98"/>
 
-  <text x="80" y="850" class="tiny">Simple mental model</text>
-  <text x="1520" y="850" text-anchor="end" class="tiny">K3s is possible and practical; GPU support must match the validated OS/Kubernetes matrix.</text>
+  <rect x="340" y="585" width="280" height="135" rx="22" fill="#ffffff" stroke="#bcccdc" stroke-width="2"/>
+  <text x="480" y="625" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700" fill="#102a43">CPU Servers</text>
+  <text x="480" y="660" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="16" fill="#486581">K3s control plane</text>
+  <text x="480" y="688" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="16" fill="#486581">Ubuntu 26.04 LTS</text>
+
+  <rect x="660" y="585" width="280" height="135" rx="22" fill="#d9f99d" stroke="#65a30d" stroke-width="2"/>
+  <text x="800" y="625" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700" fill="#365314">GPU Servers</text>
+  <text x="800" y="660" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="16" fill="#3f6212">AI compute</text>
+  <text x="800" y="688" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="16" fill="#3f6212">NVIDIA GPU Operator</text>
+
+  <rect x="980" y="585" width="280" height="135" rx="22" fill="#ffffff" stroke="#bcccdc" stroke-width="2"/>
+  <text x="1120" y="625" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700" fill="#102a43">Storage + Network</text>
+  <text x="1120" y="660" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="16" fill="#486581">Models and datasets</text>
+  <text x="1120" y="688" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="16" fill="#486581">Fast and reliable data access</text>
+
+  <path d="M480 585 V550 H800" stroke="#829ab1" stroke-width="3" fill="none"/>
+  <path d="M800 585 V550" stroke="#829ab1" stroke-width="3" fill="none"/>
+  <path d="M1120 585 V550 H800" stroke="#829ab1" stroke-width="3" fill="none"/>
+
+  <rect x="255" y="775" width="1090" height="72" rx="20" fill="#243b53"/>
+  <text x="800" y="805" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700" fill="#ffffff">Terragrunt / Terraform - Infrastructure as Code</text>
+  <text x="800" y="832" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="15" fill="#d9e2ec">Builds AWS networking, EC2, IAM, storage and load-balancing foundations</text>
+
+  <path d="M480 775 V735" stroke="#627d98" stroke-width="3" fill="none"/>
+  <path d="M800 775 V735" stroke="#627d98" stroke-width="3" fill="none"/>
+  <path d="M1120 775 V735" stroke="#627d98" stroke-width="3" fill="none"/>
+
+  <text x="60" y="875" font-family="Arial, Helvetica, sans-serif" font-size="14" fill="#627d98">Simple, scalable, open and repeatable</text>
+  <text x="1540" y="875" text-anchor="end" font-family="Arial, Helvetica, sans-serif" font-size="14" fill="#627d98">AI Factory = infrastructure + Kubernetes + compute + data + AI services</text>
 </svg>
