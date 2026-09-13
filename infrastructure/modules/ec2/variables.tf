@@ -70,9 +70,9 @@ variable "instances" {
 }
 
 variable "ami_ssm_parameter_name" {
-  description = "AWS SSM public parameter containing the AMI ID."
+  description = "Canonical AWS SSM public parameter containing the Ubuntu Server 26.04 LTS AMD64 gp3 AMI ID. Override when a different OS/release or architecture is intentionally required."
   type        = string
-  default     = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
+  default     = "/aws/service/canonical/ubuntu/server/26.04/stable/current/amd64/hvm/ebs-gp3/ami-id"
 }
 
 variable "ingress_rules" {
