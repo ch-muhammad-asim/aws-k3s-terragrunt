@@ -1,1022 +1,721 @@
-# AI Factory on Kubernetes: what it is, where K3s fits, and how to build one
+# AI Factory on Kubernetes
 
-> **Research review:** 2026-09-13. This guide was checked against current NVIDIA AI Factory / AI Enterprise reference material, NVIDIA GPU Operator support, Kubernetes resource-management documentation, Kubeflow, KServe, KubeRay, Kueue, and MLflow documentation.
+> **Research review:** 2026-09-13. This guide reflects the current repository architecture and current upstream documentation for Ubuntu on AWS, NVIDIA AI Factory / AI Enterprise, NVIDIA GPU Operator, Kubernetes, Kubeflow, KServe, KubeRay, Kueue and MLflow.
+
+![Simple AI Factory architecture](architecture.svg)
+
+The diagram above is deliberately simple: **Terragrunt builds the foundation, Kubernetes/K3s runs the factory, CPU/GPU machines provide compute, and AI services turn data into useful outputs.**
 
 ## Executive summary
 
-An **AI factory** is not one product and it is not simply a Kubernetes cluster with GPUs. It is an operating platform that repeatedly turns **data + compute + models + software** into production AI services, then feeds production telemetry and feedback back into the next development cycle.
+An **AI factory** is not one product, one GPU server, one LLM, or one Kubernetes cluster. It is a repeatable platform that turns **data + compute + models + software** into production AI capabilities and then uses monitoring and feedback to improve the next iteration.
 
 A useful mental model is:
 
 ```text
-Data
-  |
-  v
-Prepare / curate / index
-  |
-  v
+People + data
+     |
+     v
+Prepare data
+     |
+     v
 Train / fine-tune / evaluate
-  |
-  v
-Package / register
-  |
-  v
+     |
+     v
+Package / register models
+     |
+     v
 Deploy / serve / scale
-  |
-  v
+     |
+     v
 Observe / govern / collect feedback
-  |
-  +-------------------------------> next iteration
+     |
+     +-----------------------------> next iteration
 ```
 
-Kubernetes is a strong foundation for this because it provides scheduling, self-healing, resource isolation, APIs, operators, namespaces, policy, rollout mechanisms, and a common control plane for CPU and accelerator workloads. NVIDIA's current Enterprise AI Factory guidance explicitly places Kubernetes at the core of the cloud-native platform and uses Kubernetes operators to manage GPUs, networking, and AI services.
+Kubernetes is a strong foundation for this platform because it gives one control plane for CPU and GPU workloads, scheduling, self-healing, isolation, operators, policy, services, rollouts and scaling.
 
-**K3s can absolutely be used to build an AI factory**, especially a small-to-medium self-hosted platform, edge AI system, inference platform, development environment, or cost-conscious GPU cluster. It is still Kubernetes, so Kubernetes-native AI software such as GPU Operator, Kubeflow components, KServe, KubeRay, Kueue, MLflow, Prometheus, and Argo CD can run on it when their version and platform requirements are met.
+**Yes, K3s can be used to build an AI factory.** It is a conformant Kubernetes distribution and can run Kubernetes-native AI components when their version, OS, GPU, driver, networking and storage requirements are satisfied.
 
-The important qualifier is supportability. As of this review, NVIDIA GPU Operator `26.7.x` lists K3s as validated on Ubuntu 22.04, 24.04, and 26.04 for Kubernetes/K3s versions `1.33` through `1.37`. This repository currently pins K3s `v1.36.4+k3s1`, which falls inside that Kubernetes version range, but the current EC2 node uses Amazon Linux 2023. Amazon Linux 2023 is **not listed in NVIDIA's current K3s validation rows**, so a production GPU worker design should not assume that the current OS is a validated NVIDIA GPU Operator combination.
-
-For this repository, the cleanest evolution is therefore:
+For this repository the baseline is now:
 
 ```text
-Terragrunt
-   |
-   +--> AWS network / IAM / storage / load balancing
-   |
-   +--> CPU K3s server nodes
-   |
-   +--> GPU worker nodes on a validated GPU OS/profile
-              |
-              v
-         K3s / RKE2 / another Kubernetes distribution
-              |
-              +--> NVIDIA GPU Operator
-              +--> optional NVIDIA Network Operator / RDMA stack
-              +--> CSI / object / high-throughput storage
-              +--> Kueue / batch scheduling
-              +--> Kubeflow / MLflow
-              +--> KServe / KubeRay / model runtimes
-              +--> Prometheus / Grafana / DCGM
-              +--> Argo CD / GitOps
+AWS
+└── Ubuntu Server 26.04 LTS
+    └── K3s v1.36.4+k3s1
+        ├── Traefik
+        ├── cert-manager
+        ├── Argo CD
+        └── application / AI workloads
 ```
 
-The repository should continue to use **Terragrunt/Terraform for the infrastructure substrate** and Kubernetes for the AI platform. Kubernetes can manage some external infrastructure through projects such as Crossplane or Cluster API, but using the same cluster to bootstrap every layer of the infrastructure can create circular dependencies and makes disaster recovery harder.
+Ubuntu 26.04 LTS is the latest Ubuntu LTS release as of this review. The repository resolves Canonical's latest regional AMD64 gp3 image through this AWS public SSM parameter:
+
+```text
+/aws/service/canonical/ubuntu/server/26.04/stable/current/amd64/hvm/ebs-gp3/ami-id
+```
+
+Canonical Ubuntu-on-AWS reference:
+<https://documentation.ubuntu.com/aws/aws-how-to/instances/find-ubuntu-images/>
+
+Ubuntu 26.04 LTS release announcement:
+<https://canonical.com/blog/canonical-releases-ubuntu-26-04-lts-resolute-raccoon>
 
 ---
 
 ## 1. What does "AI factory" mean?
 
-The phrase is used by several vendors, most prominently NVIDIA, but the architectural idea is broader than one vendor. Think of an AI factory as the platform equivalent of a production line for AI:
+Think of a traditional factory:
 
-- raw enterprise data enters the system;
-- data is transformed into AI-ready datasets, embeddings, features, or training corpora;
-- models are trained, fine-tuned, evaluated, or selected;
-- models and application artifacts are versioned;
-- inference or agent services are deployed;
-- the services are observed for quality, latency, throughput, safety, and cost;
-- production data and feedback drive the next model/application iteration.
+```text
+raw material -> production line -> quality checks -> finished product
+```
 
-NVIDIA's 2026 Enterprise AI Factory Design Guide describes an AI factory as a hardware-and-software co-designed system built to industrialize AI deployment, with accelerator capacity, high-speed networking, scalable storage, power/cooling, cloud-native software, security, observability, and automation treated as one system.
+An AI factory applies the same idea to AI:
 
-Official reference:
+```text
+data -> AI/ML pipeline -> evaluation -> model/service -> production feedback
+```
 
-- NVIDIA Enterprise AI Factory overview: <https://docs.nvidia.com/ai-enterprise/planning-resource/ai-factory-white-paper/latest/ai-factory-overview.html>
-- NVIDIA AI Factory ecosystem architecture: <https://docs.nvidia.com/ai-enterprise/planning-resource/ai-factory-white-paper/latest/ecosystem-architecture.html>
-- NVIDIA AI Factory deployment strategies: <https://docs.nvidia.com/ai-enterprise/planning-resource/ai-factory-white-paper/latest/deployment-strategies.html>
-
-### AI factory is more than GPUs
-
-A rack of GPUs is **compute capacity**, not an AI factory by itself.
-
-A Kubernetes cluster is **an orchestration platform**, not an AI factory by itself.
-
-An LLM inference server is **one workload**, not an AI factory by itself.
-
-The AI factory appears when those pieces become an integrated, repeatable platform:
+The platform normally includes several layers:
 
 ```text
 Facilities / cloud capacity
         |
 Compute + accelerators
         |
-High-speed network + storage
+Network + storage
         |
-Operating system / firmware / drivers
+Operating system + drivers
         |
-Kubernetes platform
+Kubernetes
         |
 GPU / network / storage operators
         |
-Data + ML + inference platform services
+ML / data / model-serving platform
         |
-CI/CD + GitOps + security + observability
+GitOps + security + observability
         |
-AI applications, models, agents and pipelines
+AI applications / models / agents
 ```
+
+NVIDIA's current AI Factory guidance similarly treats compute, networking, storage, Kubernetes, accelerated infrastructure software, observability, security and AI software as one coordinated system.
+
+Official references:
+
+- NVIDIA Enterprise AI Factory overview: <https://docs.nvidia.com/ai-enterprise/planning-resource/ai-factory-white-paper/latest/ai-factory-overview.html>
+- NVIDIA AI Factory ecosystem architecture: <https://docs.nvidia.com/ai-enterprise/planning-resource/ai-factory-white-paper/latest/ecosystem-architecture.html>
+- NVIDIA AI Factory deployment strategies: <https://docs.nvidia.com/ai-enterprise/planning-resource/ai-factory-white-paper/latest/deployment-strategies.html>
+
+### What is not an AI factory by itself?
+
+A few GPUs are **compute capacity**.
+
+A Kubernetes cluster is **an orchestration layer**.
+
+An inference server is **one workload**.
+
+A notebook environment is **one development tool**.
+
+The AI factory appears when these become a repeatable operational platform with lifecycle management, automation, observability, security and feedback.
 
 ---
 
 ## 2. Where Kubernetes fits
 
-Kubernetes sits in the middle of the AI factory. It is not the physical infrastructure and it is not the AI model; it is the control plane that connects infrastructure capacity to workloads.
+Kubernetes sits between infrastructure capacity and AI workloads.
 
-NVIDIA's current AI Enterprise software reference architecture uses **upstream Kubernetes** and `containerd` as the example orchestration/runtime stack. Its documentation describes Kubernetes as the platform for deployment, scaling, multi-tenancy, GPU scheduling, networking operators, and production AI workloads.
+It answers questions such as:
 
-Official reference:
+- Which machine should run this workload?
+- Does this job need CPU, memory or GPU?
+- What happens if the process crashes?
+- Which team is allowed to use which resources?
+- How do we deploy a new model version safely?
+- How do we expose a model API?
+- How do we scale inference replicas?
+- How do we queue expensive training jobs?
 
-- NVIDIA AI Enterprise software stack: <https://docs.nvidia.com/ai-enterprise/reference-architecture/latest/software-stack.html>
-- NVIDIA AI Enterprise platform overview: <https://docs.nvidia.com/ai-enterprise/reference-architecture/latest/platform-overview.html>
+Typical mappings are:
 
-Kubernetes contributes the following building blocks.
-
-| Need | Kubernetes capability |
+| AI-factory need | Kubernetes capability |
 |---|---|
-| Place workloads on GPU/CPU nodes | scheduler, labels, taints/tolerations, affinity |
-| Expose accelerators | device plugins and Dynamic Resource Allocation (DRA) |
-| Multi-tenancy | namespaces, RBAC, quotas, policies |
-| Self-healing | controllers, ReplicaSets, StatefulSets, Jobs |
-| Rollouts | Deployments, operators, GitOps controllers |
-| Batch/training | Jobs plus Kueue/Volcano/other schedulers |
-| Inference | Services, Gateway/Ingress, KServe, Ray Serve, custom runtimes |
+| Place workloads | scheduler, labels, affinity, taints/tolerations |
+| Allocate GPUs | device plugins / Dynamic Resource Allocation |
+| Separate teams | namespaces, RBAC, quotas, policy |
+| Recover failed services | controllers and self-healing |
+| Deploy model versions | Deployments, operators, GitOps |
+| Training/batch | Jobs plus Kueue or another batch scheduler |
+| Inference APIs | Services, Gateway/Ingress, KServe, Ray Serve |
 | Persistent data | CSI, PersistentVolumes, object storage integrations |
-| Hardware lifecycle | GPU Operator, Network Operator and vendor operators |
-| Observability | Prometheus ecosystem, OpenTelemetry, DCGM Exporter |
+| GPU software lifecycle | NVIDIA GPU Operator |
+| Metrics | Prometheus, OpenTelemetry, DCGM Exporter |
 
-### Modern accelerator allocation
-
-Kubernetes Dynamic Resource Allocation (DRA) is now a stable Kubernetes feature. Kubernetes documents it as a way for workloads to request and share hardware devices such as accelerators. DRA became stable in Kubernetes 1.35, and Kubernetes 1.37 added GA support for DRA-backed extended resources.
+Kubernetes Dynamic Resource Allocation is now stable and gives Kubernetes a richer way to allocate hardware devices such as accelerators.
 
 Official references:
 
-- Kubernetes DRA concept: <https://kubernetes.io/docs/concepts/resource-management/dynamic-resource-allocation/>
-- Kubernetes 1.37 DRA updates: <https://kubernetes.io/blog/2026/09/03/kubernetes-v1-37-dra-updates/>
-
-This matters for AI factories because accelerator scheduling is becoming richer than a simple integer such as `nvidia.com/gpu: 1`.
+- Kubernetes DRA: <https://kubernetes.io/docs/concepts/resource-management/dynamic-resource-allocation/>
+- Kubernetes resource management: <https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/>
 
 ---
 
-## 3. Can K3s be the Kubernetes layer of an AI factory?
+## 3. Can K3s be used for an AI factory?
 
-**Yes.** K3s is a conformant Kubernetes distribution. Kubernetes-native AI components generally care about the Kubernetes APIs, container runtime, device exposure, storage/network interfaces, and supported versions rather than whether the control plane binary came from K3s or kubeadm.
+**Yes.**
 
-The strongest current evidence is the NVIDIA GPU Operator support matrix. NVIDIA GPU Operator `26.7.x` explicitly includes **K3s** in its supported/validated Kubernetes platform table for Ubuntu 22.04, Ubuntu 24.04, and Ubuntu 26.04, covering Kubernetes versions 1.33 through 1.37.
+K3s uses normal Kubernetes APIs and runs Kubernetes workloads with containerd. Kubernetes-native AI operators and services generally care about:
 
-Official reference:
+- Kubernetes API compatibility;
+- Linux/kernel compatibility;
+- container runtime;
+- GPU driver/runtime compatibility;
+- device exposure;
+- storage interfaces;
+- networking capabilities;
+- exact supported versions.
 
-- NVIDIA GPU Operator platform support: <https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/platform-support.html>
-- NVIDIA GPU Operator installation: <https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/getting-started.html>
+They do not generally require the control plane to have been created specifically by kubeadm.
 
-### Important repository-specific caveat
+### Strong current evidence: NVIDIA GPU Operator
 
-This repository currently uses:
+NVIDIA's current GPU Operator platform-support matrix includes **K3s** and validates K3s on Ubuntu releases including Ubuntu 26.04 for supported Kubernetes version ranges. This repository currently pins K3s `v1.36.4+k3s1`, so the Kubernetes version is in the current documented K3s range for GPU Operator `26.7.x` at the time of this review.
+
+Always re-check the current matrix before deploying production GPU nodes because NVIDIA updates the validated combinations independently of this repository.
+
+Official references:
+
+- NVIDIA GPU Operator: <https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/>
+- GPU Operator platform support: <https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/platform-support.html>
+- GPU Operator getting started: <https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/getting-started.html>
+
+### Why Ubuntu 26.04 LTS improves this repository's AI direction
+
+The previous repository baseline used Amazon Linux 2023. The current baseline uses **Ubuntu Server 26.04 LTS**.
+
+That provides a more natural path for an NVIDIA-oriented AI worker design because Ubuntu appears directly in NVIDIA's current Kubernetes/GPU validation documentation and Canonical positions Ubuntu 26.04 LTS as an AI/ML-ready LTS release.
+
+This does **not** mean every GPU, driver and library combination is automatically supported. Production qualification still needs the exact matrix:
 
 ```text
-K3s:       v1.36.4+k3s1
-OS:        Amazon Linux 2023
-Profile:   one EC2 K3s server/worker
-Compute:   t3.medium by default
+Ubuntu release
++ kernel
++ Kubernetes/K3s release
++ NVIDIA driver branch
++ GPU Operator release
++ GPU model
++ container runtime
+= validated platform combination
 ```
 
-K3s `1.36` is within the current NVIDIA GPU Operator K3s version range, but **Amazon Linux 2023 is not listed in the K3s rows of NVIDIA's current validation matrix**.
-
-Therefore:
-
-> Do not describe the existing Amazon Linux 2023 node as a validated NVIDIA GPU Operator AI node.
-
-For a production NVIDIA GPU worker pool, a safer design is to use an OS/distribution combination that appears in the current support matrix, for example Ubuntu 24.04 LTS with a supported K3s/RKE2/Kubernetes version, and validate the exact GPU, driver, kernel, container runtime, and operator release before deployment.
-
-The existing Amazon Linux node can still remain useful as a control-plane or general CPU node if that operational model is desired.
-
 ---
 
-## 4. Can Kubernetes build the infrastructure itself?
+## 4. Current repository architecture
 
-This question has two different meanings.
-
-### Meaning A: can Kubernetes operate the AI infrastructure once machines exist?
-
-**Yes. This is one of its strongest use cases.**
-
-Once servers, VMs, GPUs, networks, and storage endpoints exist, Kubernetes and operators can manage a large amount of the software infrastructure:
-
-- GPU drivers/runtime/device exposure through NVIDIA GPU Operator;
-- networking components through NVIDIA Network Operator or other CNIs/operators;
-- storage through CSI operators;
-- model serving through KServe or Ray Serve;
-- ML pipelines through Kubeflow components;
-- queues and quotas through Kueue;
-- telemetry through Prometheus/DCGM/OpenTelemetry;
-- GitOps through Argo CD;
-- certificates through cert-manager;
-- application ingress/gateway through Traefik or another Gateway/Ingress implementation.
-
-### Meaning B: should Kubernetes provision every lower infrastructure layer too?
-
-**It is possible, but it should not automatically be the default.**
-
-Projects such as Crossplane and Cluster API let Kubernetes APIs manage cloud and cluster infrastructure, but the bootstrap problem remains: something must first create the management cluster, IAM access, networking, state/storage and recovery path.
-
-For this repository, the clearer separation is:
-
-```text
-Layer 1 - Infrastructure substrate
-Terragrunt / Terraform
-  -> VPC
-  -> subnets
-  -> security groups
-  -> IAM
-  -> EC2 / GPU EC2
-  -> disks / object storage / load balancers
-
-Layer 2 - Kubernetes
-K3s / RKE2 / kubeadm / OpenShift / another distribution
-  -> cluster control plane
-  -> CPU workers
-  -> GPU workers
-
-Layer 3 - AI platform
-Kubernetes operators + Helm/GitOps
-  -> GPU Operator
-  -> storage/network operators
-  -> Kueue
-  -> Kubeflow components
-  -> MLflow
-  -> KServe
-  -> KubeRay
-  -> observability
-
-Layer 4 - AI products
-  -> model APIs
-  -> RAG
-  -> agents
-  -> batch inference
-  -> fine tuning
-  -> distributed training
-```
-
-This separation makes disaster recovery easier because infrastructure can be rebuilt without requiring the AI cluster to already be healthy.
-
-NVIDIA's current deployment-strategy guidance follows a similar separation: IaC for repeatable provisioning, automation for platform software, Helm/operators for Kubernetes services, and GitOps for ongoing application configuration.
-
-Official reference:
-
-- NVIDIA AI Factory deployment strategies: <https://docs.nvidia.com/ai-enterprise/planning-resource/ai-factory-white-paper/latest/deployment-strategies.html>
-
----
-
-## 5. A practical AI factory architecture using K3s
-
-For a **small-to-medium self-hosted AI factory**, a sensible target is:
-
-```text
-                           Developers / CI / GitOps
-                                  |
-                                  v
-                         API / ingress / gateway
-                                  |
-                         +--------+---------+
-                         | Kubernetes API  |
-                         +--------+---------+
-                                  |
-               +------------------+------------------+
-               |                  |                  |
-        K3s server 1       K3s server 2       K3s server 3
-        CPU / etcd          CPU / etcd          CPU / etcd
-               |                  |                  |
-               +---------- control-plane HA --------+
-                                  |
-            +---------------------+-----------------------+
-            |                                             |
-     CPU worker pool                               GPU worker pool
-     general services                              AI workloads
-            |                                             |
-            |                                  NVIDIA GPU Operator
-            |                                  DCGM / telemetry
-            |                                  optional MIG / sharing
-            |                                             |
-            +---------------------+-----------------------+
-                                  |
-            +---------------------+-----------------------+
-            |                     |                       |
-         Storage              AI platform             Serving
-   object / CSI / NVMe      Kubeflow / MLflow       KServe / Ray
-            |                     |                       |
-            +---------------------+-----------------------+
-                                  |
-                         Argo CD / GitOps
-                                  |
-                    monitoring / policy / security
-```
-
-### Why keep control-plane nodes mostly CPU-only?
-
-GPU machines are expensive. etcd, the API server, scheduler, controllers, ingress control components, GitOps controllers and certificate controllers do not require a high-end GPU.
-
-Separating the pools lets you:
-
-- upgrade or drain GPU nodes independently;
-- scale GPU capacity independently;
-- use cheaper CPU instances for the control plane;
-- isolate expensive accelerators from normal platform pods;
-- apply taints such as `accelerator=nvidia:NoSchedule` and allow only GPU workloads onto those workers;
-- choose different operating-system/kernel policies for GPU nodes.
-
-For a very small lab, one GPU-capable K3s server/worker can run everything. That is useful for learning, but it is not the topology I would use for a production HA AI factory.
-
----
-
-## 6. AI platform components you can run on K3s/Kubernetes
-
-The following projects are examples, not a requirement to install every tool.
-
-### NVIDIA GPU Operator
-
-Purpose: automate GPU driver/runtime/device plugin/DCGM-related Kubernetes integration.
-
-NVIDIA describes GPU Operator as the lifecycle manager for the software required to expose NVIDIA GPUs to Kubernetes.
-
-- Docs: <https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/>
-- Platform support: <https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/platform-support.html>
-
-### NVIDIA Network Operator
-
-Purpose: automate NVIDIA networking components and enable high-performance networking configurations, including use cases involving RDMA/GPUDirect RDMA.
-
-This becomes important for multi-node training, where east-west GPU traffic can dominate performance.
-
-- Docs: <https://docs.nvidia.com/networking/display/kubernetes2612/getting-started-with-kubernetes.html>
-- NVIDIA AI Enterprise networking context: <https://docs.nvidia.com/ai-enterprise/reference-architecture/latest/networking.html>
-
-For small single-node inference, you may not need this complexity.
-
-### Kubeflow
-
-Kubeflow describes itself as a **Cloud Native AI platform** composed of modular open-source projects for data, AI/ML, and HPC workloads on Kubernetes.
-
-Use it when you need a broader Kubernetes-native ML platform rather than only model serving.
-
-- Introduction: <https://www.kubeflow.org/docs/started/introduction/>
-- Installation/distributions: <https://www.kubeflow.org/docs/started/installing-kubeflow/>
-
-Do not install the whole Kubeflow ecosystem just because it exists. Select the modules that solve actual platform requirements.
-
-### KServe
-
-Purpose: production model inference on Kubernetes.
-
-KServe's administrator documentation describes it as a Kubernetes model-inference platform supporting predictive and generative inference.
-
-- Admin guide: <https://kserve.github.io/website/docs/admin-guide/overview>
-- Quickstart: <https://kserve.github.io/website/docs/getting-started/quickstart-guide>
-
-### KubeRay / Ray
-
-Purpose: distributed Python/AI compute, training, data processing and Ray Serve workloads on Kubernetes.
-
-KubeRay is the Kubernetes operator for Ray and manages `RayCluster`, `RayJob`, `RayService`, and related resources.
-
-- Ray on Kubernetes: <https://docs.ray.io/en/latest/cluster/kubernetes/index.html>
-- KubeRay getting started: <https://docs.ray.io/en/latest/cluster/kubernetes/getting-started.html>
-
-### Kueue
-
-Purpose: Kubernetes-native queueing, quotas, admission and fair sharing for batch/AI jobs.
-
-Kueue is especially useful when several teams compete for scarce GPU capacity.
-
-- Overview: <https://kueue.sigs.k8s.io/docs/overview/>
-- Documentation: <https://kueue.sigs.k8s.io/docs/>
-
-### MLflow
-
-Purpose: experiment tracking, model metadata/registry-related workflows and ML lifecycle tooling.
-
-MLflow now provides a Kubernetes Helm deployment path for self-hosted environments.
-
-- Kubernetes deployment: <https://mlflow.org/docs/latest/self-hosting/kubernetes-helm>
-
-### DCGM Exporter
-
-Purpose: expose NVIDIA GPU telemetry in Prometheus format.
-
-A production AI factory should observe accelerator utilization, memory, temperature, errors and workload-level metrics rather than only CPU/memory metrics.
-
-- NVIDIA DCGM Exporter: <https://docs.nvidia.com/datacenter/dcgm/latest/installation/install-dcgm-exporter.html>
-
----
-
-## 7. Storage is a first-class design decision
-
-AI workloads can be far more storage-sensitive than ordinary web services.
-
-Different data has different access patterns:
-
-| Data | Typical requirement |
-|---|---|
-| training datasets | high sequential throughput, parallel reads |
-| model checkpoints | large writes + reliable persistence |
-| model weights | fast startup/read path |
-| embeddings | vector database / high IOPS depending design |
-| artifacts | object storage is often appropriate |
-| experiment metadata | relational database / durable service |
-| hot temporary data | local NVMe can be valuable |
-
-A simple development cluster can use normal CSI-backed block storage and S3-compatible object storage. Large distributed training may require a much more deliberate storage architecture, parallel filesystems, NVMe tiers, or GPUDirect Storage-capable designs.
-
-NVIDIA's AI Factory guidance treats storage as part of the co-designed system rather than an afterthought.
-
-Reference:
-
-- AI Factory overview: <https://docs.nvidia.com/ai-enterprise/planning-resource/ai-factory-white-paper/latest/ai-factory-overview.html>
-
-### Practical rule
-
-Do not place the only copy of valuable training data or model artifacts on Kubernetes node-local storage.
-
-Use node-local NVMe as a cache/scratch layer when appropriate, and keep authoritative artifacts on durable storage.
-
----
-
-## 8. Networking: inference and training have different requirements
-
-A web/API inference service may work perfectly well on standard Ethernet.
-
-Distributed training across many GPUs is very different. Workers exchange gradients/parameters and can become network-bound. High-end AI architectures may use high-bandwidth Ethernet/InfiniBand, RDMA/RoCE, GPUDirect RDMA and carefully designed east-west fabrics.
-
-NVIDIA's current AI factory reference material distinguishes GPU compute east-west traffic, storage traffic, north-south/customer traffic and management traffic.
-
-References:
-
-- NVIDIA AI Enterprise networking: <https://docs.nvidia.com/ai-enterprise/reference-architecture/latest/networking.html>
-- NVIDIA Network Operator: <https://docs.nvidia.com/networking/display/kubernetes2612/getting-started-with-kubernetes.html>
-
-For this repository's initial AI-factory evolution, do not add RDMA complexity until a workload actually requires multi-node GPU communication.
-
----
-
-## 9. Scheduling GPU workloads
-
-For a small cluster, the default Kubernetes scheduler plus NVIDIA GPU resources may be enough.
-
-As the platform grows, typical requirements include:
-
-- team quotas;
-- job queues;
-- gang/co-scheduling;
-- priorities and preemption;
-- heterogeneous GPU types;
-- reserved versus shared pools;
-- GPU fractions/sharing;
-- topology-aware scheduling;
-- batch versus latency-sensitive inference priorities.
-
-Possible solutions include Kueue, Volcano, Run:ai, or other specialized schedulers depending operational and commercial requirements.
-
-NVIDIA's 2026 AI Factory guidance explicitly mentions sophisticated schedulers such as Kueue and Volcano as optional extensions for efficient multi-tenant AI environments.
-
-### GPU sharing: understand the isolation model
-
-NVIDIA GPU Operator supports technologies including MIG and time-slicing.
-
-- **MIG** partitions supported GPUs into hardware-isolated GPU instances with memory/fault isolation characteristics.
-- **Time-slicing** increases utilization by sharing a GPU across workloads but does not provide the same memory/fault isolation as MIG.
-
-Do not treat every GPU-sharing mode as equivalent multi-tenant isolation.
-
-Reference:
-
-- GPU Operator with MIG: <https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/gpu-operator-mig.html>
-
----
-
-## 10. Observability for an AI factory
-
-Normal Kubernetes monitoring is necessary but insufficient.
-
-You should observe at least:
-
-```text
-Infrastructure
-  CPU / RAM / disk / network
-
-Kubernetes
-  node health / pods / deployments / Jobs / API / etcd
-
-GPU
-  utilization / memory / temperature / power / ECC/XID errors
-
-Training
-  job queue time / GPU hours / progress / checkpoint health
-
-Inference
-  latency / throughput / tokens per second / queue depth / errors
-
-Model / application
-  quality / drift / evaluation / safety / feedback
-
-Business
-  cost per request / cost per model / utilization / SLO
-```
-
-NVIDIA DCGM Exporter publishes GPU telemetry in Prometheus format and can be managed by GPU Operator.
-
-Reference:
-
-- DCGM Exporter installation: <https://docs.nvidia.com/datacenter/dcgm/latest/installation/install-dcgm-exporter.html>
-
-For an open platform, a common direction is Prometheus + Grafana for infrastructure metrics and OpenTelemetry for application traces/logs/metrics, combined with model-specific telemetry.
-
----
-
-## 11. Security and multi-tenancy
-
-An AI factory frequently contains valuable data, models, API credentials and expensive accelerator capacity. Treat it as a security-sensitive platform.
-
-At minimum consider:
-
-- Kubernetes RBAC and least privilege;
-- namespace isolation;
-- NetworkPolicies;
-- Pod Security admission/policies;
-- encrypted secrets and external secret management;
-- image provenance/scanning/signing;
-- admission policy;
-- private registries;
-- audit logs;
-- secure access to model artifacts;
-- per-team quotas;
-- GPU isolation strategy;
-- separate production and experimentation boundaries where appropriate;
-- encryption for storage and network paths;
-- backup/restore for cluster state and model/data metadata.
-
-For regulated environments, distribution/vendor support, validated combinations, FIPS requirements and lifecycle guarantees may become more important than minimizing Kubernetes overhead.
-
----
-
-## 12. K3s advantages for an AI factory
-
-### Pros
-
-**Low operational overhead.** K3s packages Kubernetes into a simpler operational model, useful when the platform team is small.
-
-**Good fit for edge and smaller GPU clusters.** AI inference at remote sites, factories, labs or branch locations can benefit from K3s's small footprint.
-
-**Conformant Kubernetes APIs.** Most Kubernetes-native AI operators and CRDs can use the same APIs they use on other distributions, subject to their support matrices.
-
-**Containerd included.** The default runtime aligns well with common GPU/Kubernetes tooling.
-
-**Fast path from one node to multi-node.** You can start with a small environment and evolve to server/agent separation.
-
-**Current NVIDIA GPU Operator validation exists.** K3s is explicitly present in NVIDIA's current platform-support matrix on supported Ubuntu versions.
-
-**Cost efficiency.** The Kubernetes management layer consumes less infrastructure than some heavier enterprise platforms.
-
-### Cons
-
-**The distribution does not solve AI hardware design.** K3s does not provide GPUs, RDMA, high-throughput storage, power/cooling or an AI data platform.
-
-**Support matrix matters.** The current repository OS is not in the current NVIDIA K3s GPU Operator validation rows.
-
-**Large GPU fabrics need deeper engineering.** Multi-node distributed training requires serious networking, topology, storage and scheduling work regardless of how lightweight the Kubernetes distribution is.
-
-**Enterprise validation may favor another platform.** OpenShift, RKE2, upstream Kubernetes or a vendor-certified stack may have stronger alignment with a company's support/compliance requirements.
-
-**K3s defaults may need adjustment.** Bundled components that are convenient for general-purpose clusters may be replaced/disabled in a specialized AI platform.
-
-**Small operational footprint is not the same as large-scale AI efficiency.** GPU utilization and data movement dominate AI economics; saving a little control-plane RAM does not matter if expensive accelerators sit idle.
-
----
-
-## 13. Other Kubernetes distributions for AI factories
-
-No distribution is universally best. The right choice is driven by scale, support, security/compliance, hardware ecosystem and the team's operating model.
-
-| Platform | AI factory fit | Strengths | Trade-offs |
-|---|---|---|---|
-| **K3s** | small/medium self-hosted, edge, inference, labs | lightweight, simple, NVIDIA GPU Operator validation on supported Ubuntu/K8s versions | fewer enterprise defaults; validate OS/GPU/operator combinations carefully |
-| **RKE2** | enterprise/self-hosted with stronger security posture | SUSE/Rancher ecosystem, closer enterprise posture, current NVIDIA GPU Operator validation | more footprint/operations than K3s |
-| **Upstream Kubernetes / kubeadm** | teams wanting explicit upstream architecture | maximum component control; aligns with NVIDIA's generic software RA example | more lifecycle work owned by platform team |
-| **OpenShift** | regulated/enterprise AI platforms | strong enterprise lifecycle, policy, integrated ecosystem, NVIDIA support paths | licensing/cost and operational complexity |
-| **k0s** | lightweight alternative | small operational surface; appears in current NVIDIA GPU Operator platform matrix on supported combinations | smaller ecosystem mindshare than mainstream enterprise choices |
-| **MicroK8s** | Canonical/Ubuntu-centered environments | simple packaging; present in current NVIDIA GPU Operator matrix on supported combinations | Snap/Canonical operating model may not fit every organization |
-| **Talos Linux + Kubernetes** | immutable dedicated Kubernetes nodes | strong API-driven immutable-node model | verify AI/GPU vendor support for the exact stack; not listed like K3s/RKE2 in the current NVIDIA GPU Operator matrix reviewed here |
-| **EKS/GKE/AKS** | cloud AI platform where managed control plane is desired | reduces control-plane operations; strong cloud integrations | cloud cost/lock-in and different self-hosted goals |
-
-For the broader Kubernetes distribution comparison, see [`../kubernetes-platform-comparison/README.md`](../kubernetes-platform-comparison/README.md).
-
----
-
-## 14. Which distribution would I choose?
-
-### Small/medium self-hosted AI platform
-
-```text
-K3s
-+ validated Ubuntu GPU workers
-+ GPU Operator
-+ Argo CD
-+ Kueue when sharing GPUs
-+ KServe/KubeRay/MLflow as required
-```
-
-This is a strong pragmatic design.
-
-### Security/compliance-heavy self-hosted enterprise
-
-```text
-RKE2 or OpenShift
-+ vendor-supported GPU stack
-+ hardened policies
-+ enterprise lifecycle/support
-```
-
-### Large custom GPU cluster with a strong platform engineering team
-
-```text
-Upstream Kubernetes / kubeadm or a validated enterprise distribution
-+ explicit CNI/network fabric
-+ specialized scheduler
-+ high-performance storage
-+ GPU/network operators
-```
-
-At this scale, the Kubernetes distribution is only one part of the engineering problem.
-
-### Edge AI / branch / factory-floor inference
-
-```text
-K3s
-+ one/few GPU nodes
-+ GitOps
-+ local inference service
-+ central model/artifact delivery
-```
-
-K3s is particularly attractive here.
-
----
-
-## 15. How this repository can evolve into an AI-factory foundation
-
-The current repository already has several useful platform patterns:
+The current repository is still intentionally small:
 
 ```text
 Terragrunt
-  -> VPC
-  -> EC2
-  -> K3s
-  -> Traefik
-  -> cert-manager
-  -> Argo CD
+    |
+    +--> VPC
+    |
+    +--> EC2
+           Ubuntu 26.04 LTS
+           K3s server + worker
+    |
+    +--> K3s kubeconfig retrieval
+    |
+    +--> Traefik
+    |
+    +--> cert-manager
+    |
+    +--> Argo CD
 ```
 
-It also uses map-driven `for_each` EC2 resources, which is a useful starting point for separate node roles.
+Important characteristics:
 
-However, the current default `t3.medium` single server/worker is **not an AI compute platform**. A production AI-factory evolution should deliberately introduce node roles instead of merely changing the primary EC2 instance type to a GPU instance.
+- Terragrunt is the operator interface.
+- Terraform creates AWS resources underneath Terragrunt.
+- EC2 nodes are map-driven using `for_each`.
+- K3s is installed through EC2 user data/cloud-init.
+- SSH is not required.
+- AWS Systems Manager is used to retrieve kubeconfig securely.
+- K3s's bundled Traefik is disabled and the official chart is managed separately.
+- The current profile is a single K3s server/worker and therefore **not node-level HA**.
 
-### Phase 1 - GPU proof of concept
-
-Keep the existing CPU control node and add one dedicated GPU worker profile.
-
-Target concept:
-
-```text
-primary
-  role: server/control-plane
-  CPU instance
-
-gpu-01
-  role: agent/worker
-  GPU instance
-  validated OS
-```
-
-Then install/test:
-
-1. K3s agent join flow;
-2. NVIDIA GPU Operator;
-3. a CUDA validation pod;
-4. DCGM telemetry;
-5. a simple inference workload.
-
-### Phase 2 - real HA control plane
-
-Move from one K3s server to three independent server nodes with embedded etcd and a stable API endpoint.
-
-```text
-server-01 ---+
-server-02 ---+--> API VIP/LB
-server-03 ---+
-
-GPU workers join through the stable registration endpoint.
-```
-
-Do not call three VMs/containers on one physical machine true infrastructure HA.
-
-### Phase 3 - split CPU and GPU pools
-
-```text
-CPU server/control-plane pool
-CPU general worker pool
-GPU worker pool(s)
-```
-
-Use labels/taints to keep ordinary services away from expensive GPU capacity.
-
-Example conceptual labels:
-
-```text
-node-role.kubernetes.io/control-plane
-workload.platform/general
-accelerator.nvidia.com/class=<gpu-class>
-```
-
-### Phase 4 - AI platform services
-
-Add only what the workloads require:
-
-```text
-GPU Operator
-DCGM metrics
-object/artifact storage integration
-Kueue
-MLflow
-KServe and/or KubeRay
-Kubeflow components if needed
-```
-
-Manage those through the same Terragrunt/Helm-provider or Argo CD/GitOps philosophy already established in this repository.
-
-### Phase 5 - production controls
-
-Add:
-
-- HA API endpoint;
-- etcd backup/restore testing;
-- durable model/data storage;
-- secrets management;
-- network policy;
-- GPU quotas/queues;
-- platform SLOs;
-- capacity/cost monitoring;
-- disaster recovery;
-- upgrade matrix for OS + kernel + Kubernetes + GPU driver + GPU Operator + AI platform components.
-
-That compatibility matrix is critical. GPU platforms fail when components are upgraded independently without checking driver/kernel/Kubernetes/operator compatibility.
+The current `t3.medium` profile is useful for the platform/control-plane path, not as a serious AI training machine.
 
 ---
 
-## 16. Recommended Terragrunt responsibility boundaries
+## 5. Recommended AI-factory evolution
 
-Do not collapse the entire AI factory into one Terraform state.
+Do not turn every Kubernetes node into an expensive GPU machine.
 
-A maintainable structure would eventually look conceptually like:
+A clean production direction is:
 
 ```text
-infrastructure/live/dev/us-east-1/
-  vpc/
-  control-plane-compute/
-  gpu-compute/
-  k3s/
-  gpu-operator/
-  storage-platform/
-  observability/
-  traefik/
-  cert-manager/
-  argocd/
-  ai-platform/
+                         stable API endpoint
+                                |
+                +---------------+---------------+
+                |               |               |
+          K3s server 1     K3s server 2     K3s server 3
+          Ubuntu CPU       Ubuntu CPU        Ubuntu CPU
+          control plane    control plane     control plane
+          embedded etcd    embedded etcd     embedded etcd
+                |               |               |
+                +------- control-plane HA ------+
+                                |
+             +------------------+------------------+
+             |                                     |
+        CPU workers                           GPU workers
+ platform / normal apps                       AI workloads
+                                                   |
+                                          GPU Operator
+                                          DCGM telemetry
+                                          model runtimes
 ```
 
-The exact unit names can change, but the lifecycle boundaries matter.
+Then add platform services according to need:
 
-For example, changing a KServe chart version should not replace GPU EC2 instances. Replacing a GPU worker should not recreate the VPC. Upgrading K3s should not implicitly destroy model storage.
+```text
+Kubernetes
+├── GPU lifecycle
+│   └── NVIDIA GPU Operator
+├── scheduling / quotas
+│   └── Kueue
+├── AI / ML workflows
+│   └── Kubeflow components
+├── experiment / model tracking
+│   └── MLflow
+├── distributed compute
+│   └── KubeRay / Ray
+├── model serving
+│   └── KServe / Ray Serve / custom runtime
+├── observability
+│   └── Prometheus / Grafana / OpenTelemetry / DCGM
+└── GitOps
+    └── Argo CD
+```
 
-### Recommended ownership
+This architecture lets expensive GPU capacity scale independently of the control plane.
 
-| Layer | Preferred owner |
+---
+
+## 6. What Terragrunt should manage vs what Kubernetes should manage
+
+For this repository, keep a clear ownership boundary.
+
+### Terragrunt / Terraform: infrastructure substrate
+
+Use Terragrunt/Terraform for:
+
+- VPC and subnets;
+- security groups;
+- IAM roles and policies;
+- CPU EC2 instances;
+- GPU EC2 instances;
+- EBS volumes;
+- object-storage infrastructure;
+- load balancers / static infrastructure endpoints;
+- DNS/cloud resources where appropriate.
+
+### Kubernetes / operators / GitOps: platform software
+
+Use Kubernetes for:
+
+- GPU Operator;
+- network/storage operators;
+- Kueue;
+- Kubeflow components;
+- KServe;
+- KubeRay;
+- MLflow deployments;
+- Prometheus / Grafana / OpenTelemetry;
+- model services;
+- training jobs;
+- inference services;
+- application configuration.
+
+### Can Kubernetes create cloud infrastructure too?
+
+Yes. Projects such as Crossplane and Cluster API can expose external infrastructure through Kubernetes APIs.
+
+That is technically valid, but it should not automatically replace Terragrunt here.
+
+If the same AI cluster is required to exist before it can recreate its own VPC, machines, IAM and recovery path, disaster recovery becomes harder to reason about.
+
+A simpler hierarchy is:
+
+```text
+Terragrunt creates infrastructure
+        |
+        v
+Kubernetes exists
+        |
+        v
+Operators build the AI platform
+        |
+        v
+AI workloads run
+```
+
+Crossplane: <https://www.crossplane.io/>
+
+Cluster API: <https://cluster-api.sigs.k8s.io/>
+
+---
+
+## 7. AI platform building blocks
+
+You do not need every project below. Install a component only when it solves a concrete requirement.
+
+### NVIDIA GPU Operator
+
+Automates the Kubernetes software stack needed to expose NVIDIA GPUs, including driver/runtime/device-management components depending on configuration.
+
+- <https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/>
+
+### NVIDIA Network Operator
+
+Useful for advanced NVIDIA networking and high-performance multi-node GPU communication, including environments involving RDMA/GPUDirect RDMA.
+
+- <https://docs.nvidia.com/networking/display/kubernetes/latest/network-operator>
+
+For one-GPU-node inference, this may be unnecessary complexity.
+
+### Kueue
+
+Kubernetes-native job admission, quotas, queues and fair sharing. Very useful when several teams compete for expensive accelerators.
+
+- <https://kueue.sigs.k8s.io/>
+
+### Kubeflow
+
+A modular cloud-native AI/ML platform built around Kubernetes-native projects.
+
+- <https://www.kubeflow.org/docs/started/introduction/>
+- <https://www.kubeflow.org/docs/started/installing-kubeflow/>
+
+Do not deploy every Kubeflow component by default; select only what the platform needs.
+
+### KServe
+
+Kubernetes-native model inference platform for predictive and generative serving patterns.
+
+- <https://kserve.github.io/website/docs/admin-guide/overview>
+- <https://kserve.github.io/website/docs/getting-started/quickstart-guide>
+
+### KubeRay / Ray
+
+Useful for distributed Python, data processing, training and Ray Serve workloads.
+
+- <https://docs.ray.io/en/latest/cluster/kubernetes/index.html>
+- <https://docs.ray.io/en/latest/cluster/kubernetes/getting-started.html>
+
+### MLflow
+
+Experiment tracking, model lifecycle and related ML platform capabilities.
+
+- <https://mlflow.org/docs/latest/>
+
+### Observability
+
+At minimum, an AI platform should monitor both application behavior and accelerator behavior.
+
+Useful projects include:
+
+- Prometheus: <https://prometheus.io/docs/introduction/overview/>
+- OpenTelemetry: <https://opentelemetry.io/docs/>
+- NVIDIA DCGM Exporter: <https://github.com/NVIDIA/dcgm-exporter>
+
+---
+
+## 8. Storage matters as much as GPUs
+
+A GPU without fast access to models and datasets can spend expensive time waiting for I/O.
+
+Different workloads need different storage:
+
+| Data | Typical requirement |
 |---|---|
-| VPC/subnets/IAM/security groups | Terragrunt/Terraform |
-| EC2 CPU/GPU nodes | Terragrunt/Terraform |
-| K3s/RKE2 bootstrap | immutable/user-data/image pipeline or explicit cluster lifecycle automation |
-| NVIDIA operators | Kubernetes package lifecycle via Terragrunt Helm provider or Argo CD |
-| AI platform controllers | Argo CD / Helm / Kubernetes operators |
-| AI applications/models | GitOps / deployment pipelines |
-| datasets/model artifacts | external durable data platform/object storage |
+| container images | registry |
+| model artifacts | object storage / model registry |
+| training datasets | object or high-throughput shared storage |
+| checkpoints | durable, high-throughput storage |
+| vector indexes | persistent database/storage |
+| temporary training scratch | local NVMe / fast ephemeral storage |
+| Kubernetes state | reliable low-latency etcd storage |
+
+For large AI workloads, measure storage throughput and latency instead of sizing only GPU count.
 
 ---
 
-## 17. Benefits of building an AI factory on Kubernetes
+## 9. Networking matters when AI becomes distributed
 
-### Portability
+Simple inference on one GPU node may work with ordinary Kubernetes networking.
 
-The workload API is less tied to one VM layout. The same application model can move between self-hosted and cloud clusters more easily than a bespoke collection of systemd services.
-
-### Resource efficiency
-
-CPU, RAM and GPU workloads can share a controlled resource pool. Queues and quotas improve utilization of expensive accelerators.
-
-### Repeatability
-
-Operators, Helm and GitOps create a reproducible platform rather than a collection of hand-configured servers.
-
-### Multi-tenancy
-
-Namespaces, RBAC, quotas and policy provide a foundation for multiple development teams.
-
-### Elasticity
-
-Workers and workloads can scale independently when the underlying infrastructure supports it.
-
-### Ecosystem
-
-Most modern AI infrastructure vendors provide Kubernetes operators/charts or Kubernetes deployment paths.
-
-### Standard operations
-
-Health probes, rollout patterns, service discovery, secret integration, audit and observability can use cloud-native patterns already familiar to SRE teams.
-
----
-
-## 18. Costs and disadvantages
-
-### Complexity moves rather than disappears
-
-Kubernetes solves orchestration but introduces a control plane, operators, CRDs, cluster upgrades, policy, networking and storage lifecycle.
-
-### GPU debugging crosses many layers
-
-A failed GPU workload can involve:
+Large multi-node training can be fundamentally different:
 
 ```text
-hardware
--> firmware
--> Linux kernel
--> NVIDIA driver
--> container toolkit
--> containerd
--> GPU Operator/device plugin/DRA driver
--> kubelet
--> scheduler
--> pod
--> CUDA/framework
--> model
+GPU node A <==== very high east-west bandwidth ====> GPU node B
+     \                                             /
+      +============== GPU node C =================+
 ```
 
-### Idle accelerators are expensive
+At that point you may need:
 
-The biggest financial mistake in an AI factory is often poor GPU utilization, not Kubernetes overhead.
+- high-bandwidth NICs;
+- low-latency networking;
+- RDMA;
+- GPUDirect RDMA;
+- topology-aware placement;
+- specialized network operators;
+- careful storage-network separation.
 
-### Distributed training is infrastructure intensive
-
-A cluster that works for one-GPU inference may perform badly for multi-node training because networking and storage were not designed for collective communication and checkpoint traffic.
-
-### Compatibility management is mandatory
-
-Kernel, driver, CUDA, container runtime, Kubernetes and operators have support matrices. Pinning and testing versions is a core platform responsibility.
-
-### Kubernetes is unnecessary for some very small deployments
-
-If the requirement is only one workstation running one local model server, Docker/Podman/systemd can be simpler. Adopt Kubernetes when orchestration, multi-tenancy, lifecycle, scaling or platform standardization justify it.
+Do not add this complexity before the workload requires it.
 
 ---
 
-## 19. Decision table
+## 10. K3s vs other Kubernetes choices for an AI factory
 
-| Requirement | Recommendation |
-|---|---|
-| One developer workstation, one model | Docker/Podman may be enough |
-| One/few self-hosted GPU machines, Kubernetes desired | K3s is a strong choice |
-| Edge inference sites | K3s is a strong choice |
-| Small/medium HA private AI platform | K3s with three servers + dedicated GPU workers |
-| Enterprise security/support focus | Evaluate RKE2/OpenShift |
-| Very large multi-node training | prioritize validated networking/storage/scheduler design; distribution is secondary |
-| NVIDIA GPU Operator required | choose a combination listed in current NVIDIA platform support matrix |
-| Many teams sharing GPUs | Kubernetes + Kueue/other GPU-aware scheduling/quotas |
-| Production generative inference | Kubernetes + KServe/Ray/custom serving layer depending model/runtime |
-| Full ML platform | consider Kubeflow modules + MLflow + serving/scheduling components |
+There is no single universally best distribution.
+
+| Platform | AI-factory fit | Main reason to choose it |
+|---|---|---|
+| **K3s** | Excellent small/medium self-managed platform | simple operations, conformant Kubernetes, low overhead |
+| **RKE2** | Excellent security/compliance-oriented platform | hardened/enterprise-focused Rancher distribution |
+| **kubeadm** | Excellent when upstream assembly/control matters | maximum explicit ownership of Kubernetes components |
+| **OpenShift** | Strong large-enterprise platform | integrated enterprise platform, security and lifecycle tooling |
+| **Talos Linux** | Strong immutable dedicated-node architecture | API-managed minimal OS built specifically for Kubernetes |
+| **k0s** | Good lightweight alternative | compact distribution and straightforward operations |
+| **MicroK8s** | Good Canonical-centric environment | tight Ubuntu/Canonical ecosystem fit |
+
+For this repository I would **keep K3s** unless a concrete requirement points elsewhere.
+
+Move toward **RKE2** when compliance/security standardization becomes a stronger requirement.
+
+Consider **Talos** for a greenfield dedicated bare-metal platform where immutable/API-managed hosts are desired.
+
+Use **kubeadm** when explicit upstream-style component ownership is itself a requirement.
+
+See the repository's broader comparison:
+[`../kubernetes-platform-comparison/README.md`](../kubernetes-platform-comparison/README.md)
 
 ---
 
-## 20. Recommendation for this repository
+## 11. Pros of K3s for an AI factory
 
-For this repository, I would **keep K3s as the default Kubernetes distribution** while treating AI Factory support as a new profile rather than changing the existing general-purpose cluster into a GPU machine.
+- Conformant Kubernetes APIs.
+- Smaller operational footprint than assembling many components manually.
+- Embedded containerd.
+- Straightforward small-cluster HA with embedded etcd.
+- Good fit for edge, labs, self-hosted systems and modest platform teams.
+- Existing repository already manages K3s declaratively through Terragrunt.
+- Ubuntu 26.04 LTS provides a more natural modern GPU-platform path than the previous Amazon Linux baseline.
+- Platform can start small and add GPU workers later.
 
-Recommended direction:
+## 12. Cons / limitations
+
+- K3s does not make GPU infrastructure simple by itself; drivers, firmware, kernel compatibility and operator versions still matter.
+- Very large distributed training may require specialized networking/storage beyond the current repository.
+- Some enterprise vendors certify only specific Kubernetes/OS combinations.
+- Single-node K3s is not HA.
+- SQLite single-server mode is not the desired datastore topology for production HA.
+- GPU workloads can create large cost spikes if quotas and scheduling are not controlled.
+- A lightweight Kubernetes distribution does not eliminate the need for backups, observability, security, capacity planning or disaster recovery.
+
+---
+
+## 13. Security model
+
+An AI factory may contain valuable data, model IP, credentials and expensive accelerator capacity.
+
+At minimum consider:
 
 ```text
-Current general profile
------------------------
-Amazon Linux 2023
-CPU EC2
+Identity / RBAC
+Network policy
+Secret management
+Image provenance and scanning
+Admission policy
+Workload isolation
+GPU tenancy policy
+Data encryption
+Audit logging
+Model/artifact provenance
+Supply-chain controls
+Backup / disaster recovery
+```
+
+For this repository specifically:
+
+- keep SSH closed;
+- continue using AWS Systems Manager;
+- keep IMDSv2 required;
+- restrict Kubernetes API `6443`;
+- encrypt EBS;
+- keep kubeconfig out of Git;
+- limit access to remote Terraform state;
+- use dedicated GPU-node taints/labels once GPU pools are added.
+
+---
+
+## 14. Recommended roadmap for this repository
+
+### Phase 1 — current platform
+
+```text
+Ubuntu 26.04 LTS EC2
 K3s
 Traefik
 cert-manager
 Argo CD
-
-AI factory profile
-------------------
-3 x CPU K3s servers for HA (when production HA is needed)
-+
-N x GPU K3s agents on an NVIDIA-validated OS/platform combination
-+
-NVIDIA GPU Operator
-+
-DCGM observability
-+
-Kueue when GPU contention exists
-+
-KServe / KubeRay / MLflow / selected Kubeflow modules as workload needs dictate
-+
-Durable object/high-throughput storage
-+
-Argo CD GitOps
 ```
 
-I would **not** start by installing every AI project. Start with a single real workload and add platform capabilities only when that workload demonstrates a requirement.
+Goal: reliable Kubernetes platform lifecycle.
 
-For example, an inference-first roadmap could be:
+### Phase 2 — production HA foundation
 
 ```text
-GPU worker
-  -> GPU Operator
-  -> GPU validation
-  -> DCGM monitoring
-  -> model runtime/KServe
-  -> ingress + TLS
-  -> autoscaling
-  -> Argo CD
-  -> model/artifact storage
-  -> quotas/queueing when more teams arrive
+3 x Ubuntu K3s server nodes
+embedded etcd
+stable API endpoint
+scheduled etcd snapshots
+separate worker capacity as required
 ```
 
-A training-first roadmap would prioritize storage throughput, network topology and batch scheduling much earlier.
+Goal: remove single-node failure dependency.
+
+### Phase 3 — first GPU worker pool
+
+```text
+Ubuntu 26.04 LTS GPU EC2 nodes
+NVIDIA-supported GPU/driver combination
+NVIDIA GPU Operator
+node labels + taints
+DCGM metrics
+```
+
+Goal: make accelerator capacity available safely without putting the control plane on expensive GPU machines.
+
+### Phase 4 — AI services
+
+Add only the pieces the workloads require:
+
+```text
+Kueue
+MLflow
+KServe
+KubeRay
+selected Kubeflow components
+object/model storage
+Prometheus/Grafana/OpenTelemetry
+```
+
+### Phase 5 — larger factory
+
+If workload scale requires it:
+
+```text
+high-throughput shared storage
+multi-node GPU training
+RDMA / GPUDirect
+advanced quota / fair sharing
+multi-cluster strategy
+policy / governance
+chargeback / showback
+model and data governance
+```
 
 ---
 
-## 21. Source links and further reading
+## 15. Repository-specific recommendation
 
-### AI Factory / NVIDIA reference architecture
+For the architecture being built here:
 
-- Enterprise AI Factory Overview  
-  <https://docs.nvidia.com/ai-enterprise/planning-resource/ai-factory-white-paper/latest/ai-factory-overview.html>
-- Enterprise AI Factory Ecosystem Architecture  
-  <https://docs.nvidia.com/ai-enterprise/planning-resource/ai-factory-white-paper/latest/ecosystem-architecture.html>
-- Enterprise AI Factory Deployment Strategies  
-  <https://docs.nvidia.com/ai-enterprise/planning-resource/ai-factory-white-paper/latest/deployment-strategies.html>
-- NVIDIA AI Enterprise Software Reference Architecture - introduction  
-  <https://docs.nvidia.com/ai-enterprise/reference-architecture/latest/introduction.html>
-- NVIDIA AI Enterprise software stack  
-  <https://docs.nvidia.com/ai-enterprise/reference-architecture/latest/software-stack.html>
-- NVIDIA HGX AI Factory reference architecture overview  
-  <https://docs.nvidia.com/enterprise-reference-architectures/hgx-ai-factory-h100-h200-b200/latest/overview.html>
+> **Use Terragrunt/Terraform to create the infrastructure, Ubuntu 26.04 LTS as the node OS, K3s as the Kubernetes layer, and Kubernetes operators/GitOps to build the AI platform above it.**
 
-### Kubernetes accelerator infrastructure
+A practical long-term target is:
 
-- NVIDIA GPU Operator platform support  
-  <https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/platform-support.html>
-- NVIDIA GPU Operator  
-  <https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/>
-- NVIDIA GPU Operator installation  
-  <https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/getting-started.html>
-- NVIDIA GPU Operator MIG  
-  <https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/gpu-operator-mig.html>
-- NVIDIA Network Operator  
-  <https://docs.nvidia.com/networking/display/kubernetes2612/getting-started-with-kubernetes.html>
-- Kubernetes Dynamic Resource Allocation  
-  <https://kubernetes.io/docs/concepts/resource-management/dynamic-resource-allocation/>
-- Kubernetes 1.37 DRA updates  
-  <https://kubernetes.io/blog/2026/09/03/kubernetes-v1-37-dra-updates/>
+```text
+Terragrunt
+   |
+   +-- AWS networking / IAM / storage / load balancing
+   |
+   +-- 3 x Ubuntu 26.04 K3s servers
+   |
+   +-- CPU worker pool
+   |
+   +-- GPU worker pool
+          |
+          +-- NVIDIA GPU Operator
+          +-- DCGM
+          +-- Kueue
+          +-- MLflow / Kubeflow as needed
+          +-- KServe / KubeRay as needed
+          +-- Argo CD
+          +-- observability
+```
 
-### Cloud-native AI platform
-
-- Kubeflow introduction  
-  <https://www.kubeflow.org/docs/started/introduction/>
-- Kubeflow installation/distributions  
-  <https://www.kubeflow.org/docs/started/installing-kubeflow/>
-- KServe administrator guide  
-  <https://kserve.github.io/website/docs/admin-guide/overview>
-- Ray on Kubernetes / KubeRay  
-  <https://docs.ray.io/en/latest/cluster/kubernetes/index.html>
-- Kueue overview  
-  <https://kueue.sigs.k8s.io/docs/overview/>
-- MLflow Kubernetes Helm deployment  
-  <https://mlflow.org/docs/latest/self-hosting/kubernetes-helm>
-- NVIDIA DCGM Exporter  
-  <https://docs.nvidia.com/datacenter/dcgm/latest/installation/install-dcgm-exporter.html>
-
-### Related repository research
-
-- [Kubernetes platform comparison](../kubernetes-platform-comparison/README.md)
-- [K3s vs kubeadm](../k3s-vs-kubeadm/README.md)
-- [K3s architecture guidance](../k3s/README.md)
-- [Terragrunt-only workflow](../terragrunt-workflow/README.md)
+This keeps the infrastructure recovery path independent from the Kubernetes workloads and allows GPU capacity to evolve without redesigning the whole platform.
 
 ---
 
-## Final takeaway
+## 16. Important operational note: Amazon Linux -> Ubuntu
 
-An AI factory is a **repeatable AI production system**, not a GPU server and not a Kubernetes distribution.
+For an environment already created from the repository's previous Amazon Linux 2023 baseline, the OS change is **not an in-place upgrade**. Terraform will replace the EC2 instance because the AMI changes.
 
-Kubernetes is an excellent control plane for that system because it standardizes how compute, accelerators, storage, networking, operators and AI workloads are managed. K3s can provide that Kubernetes layer and is currently present in NVIDIA GPU Operator's support matrix on specific validated Ubuntu/Kubernetes combinations.
+This repository also enables EC2 termination/stop protection. Before the replacement, clear protection on the existing EC2 node through Terragrunt, apply that state change, then review and apply the Ubuntu replacement.
 
-For this repository, the best path is to preserve the existing Terragrunt infrastructure boundaries, evolve from a single CPU K3s node toward separate HA server and GPU worker pools, use a validated GPU operating-system/Kubernetes combination, and then add AI services such as GPU Operator, Kueue, KServe, KubeRay, MLflow or Kubeflow only where a real workload requires them.
+See [`../../VERSIONS.md`](../../VERSIONS.md) for the migration commands and current platform version matrix.
+
+---
+
+## 17. Official references
+
+### Ubuntu / AWS
+
+- Ubuntu 26.04 LTS release: <https://canonical.com/blog/canonical-releases-ubuntu-26-04-lts-resolute-raccoon>
+- Find Ubuntu images on AWS: <https://documentation.ubuntu.com/aws/aws-how-to/instances/find-ubuntu-images/>
+- AWS SSM Agent on Ubuntu: <https://docs.aws.amazon.com/systems-manager/latest/userguide/agent-install-ubuntu.html>
+
+### K3s / Kubernetes
+
+- K3s documentation: <https://docs.k3s.io/>
+- K3s architecture: <https://docs.k3s.io/architecture>
+- K3s embedded-etcd HA: <https://docs.k3s.io/datastore/ha-embedded>
+- Kubernetes resource management: <https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/>
+- Kubernetes DRA: <https://kubernetes.io/docs/concepts/resource-management/dynamic-resource-allocation/>
+
+### NVIDIA
+
+- AI Factory overview: <https://docs.nvidia.com/ai-enterprise/planning-resource/ai-factory-white-paper/latest/ai-factory-overview.html>
+- AI Factory ecosystem architecture: <https://docs.nvidia.com/ai-enterprise/planning-resource/ai-factory-white-paper/latest/ecosystem-architecture.html>
+- AI Factory deployment strategies: <https://docs.nvidia.com/ai-enterprise/planning-resource/ai-factory-white-paper/latest/deployment-strategies.html>
+- AI Enterprise software stack: <https://docs.nvidia.com/ai-enterprise/reference-architecture/latest/software-stack.html>
+- GPU Operator: <https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/>
+- GPU Operator platform support: <https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/platform-support.html>
+
+### AI / ML platform projects
+
+- Kubeflow: <https://www.kubeflow.org/docs/started/introduction/>
+- KServe: <https://kserve.github.io/website/docs/admin-guide/overview>
+- Ray/KubeRay: <https://docs.ray.io/en/latest/cluster/kubernetes/index.html>
+- Kueue: <https://kueue.sigs.k8s.io/>
+- MLflow: <https://mlflow.org/docs/latest/>
+- Prometheus: <https://prometheus.io/docs/introduction/overview/>
+- OpenTelemetry: <https://opentelemetry.io/docs/>
+
+---
+
+## Bottom line
+
+**Is an AI factory possible with K3s? Yes.**
+
+**Should Kubernetes manage the AI software/platform? Yes.**
+
+**Should this same cluster be responsible for creating every lower AWS infrastructure dependency? Not by default. Keep Terragrunt/Terraform underneath it.**
+
+**Is the current one-node `t3.medium` an AI factory? No. It is the beginning of the platform layer.**
+
+**Can this repository evolve into one? Yes — and Ubuntu 26.04 LTS makes the GPU-worker path cleaner and better aligned with current AI-platform validation guidance.**
