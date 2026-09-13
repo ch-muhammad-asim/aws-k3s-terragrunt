@@ -1,0 +1,305 @@
+# Kubernetes distribution recommendation for an AI Factory
+
+> **Research review:** 2026-09-13. Checked against current NVIDIA AI Enterprise 8.2, NVIDIA GPU Operator, NVIDIA Enterprise Reference Architecture, and RKE2 documentation.
+
+## Recommendation
+
+There is no single Kubernetes distribution that NVIDIA declares to be the universal "AI Factory distribution." NVIDIA validates several Kubernetes platforms, while its own reference architectures commonly use **upstream Kubernetes**.
+
+For this repository's goal — a **self-hosted production AI Factory** — the recommended distribution is **RKE2**.
+
+Recommended production baseline today:
+
+```text
+Ubuntu Server 24.04 LTS
+        |
+        v
+RKE2
+        |
+        v
+containerd
+        |
+        +-- NVIDIA GPU Operator
+        +-- NVIDIA Network Operator when required
+        +-- Kueue or Run:ai
+        +-- KServe / KubeRay / NIM workloads
+        +-- Prometheus / Grafana / DCGM
+        +-- Argo CD
+```
+
+The reason for preferring Ubuntu 24.04 LTS for the production AI profile is supportability rather than age. NVIDIA's current standalone GPU Operator matrix already validates newer Ubuntu 26.04 combinations for RKE2 and K3s, but the broader NVIDIA AI Enterprise 8.2 **bare-metal** matrix currently lists RKE2 on Ubuntu 20.04, 22.04 and 24.04 LTS. For production AI infrastructure, choose the combination that is validated together.
+
+> **Latest is not automatically better than validated.**
+
+## What NVIDIA uses
+
+NVIDIA Enterprise Reference Architectures commonly use a stack based on:
+
+```text
+Ubuntu
+  |
+Upstream Kubernetes
+  |
+containerd
+  |
+GPU Operator
+Network Operator
+AI workload services
+observability
+```
+
+That makes upstream Kubernetes the clearest neutral/reference implementation, but it does not mean it is the only supported production choice.
+
+NVIDIA AI Enterprise 8.2 also lists **RKE2, OpenShift, Charmed Kubernetes, upstream Kubernetes, and managed services such as EKS/GKE/AKS** in supported combinations.
+
+Official references:
+
+- NVIDIA AI Enterprise 8.2 support matrix: <https://docs.nvidia.com/ai-enterprise/release-8/latest/support/support-matrix-8/8.2.html>
+- NVIDIA Enterprise Reference Architecture: <https://docs.nvidia.com/enterprise-reference-architectures/enterprise-rag-deployment-guide/latest/enterprise-ra-overview.html>
+- NVIDIA upstream Kubernetes deployment guide: <https://docs.nvidia.com/enterprise-reference-architectures/upstream-kubernetes-deployment-guide.pdf>
+
+## Why RKE2 is the best fit here
+
+### 1. NVIDIA AI Enterprise support
+
+The current AI Enterprise 8.2 bare-metal matrix lists **SUSE Rancher RKE2** with Kubernetes versions `1.32-1.36`, `containerd`, and support for:
+
+- NVIDIA GPU Operator;
+- NVIDIA Network Operator;
+- Run:ai;
+- supported Ubuntu and RHEL combinations.
+
+That gives RKE2 a stronger enterprise-AI support position than K3s today.
+
+### 2. Straightforward HA
+
+RKE2's HA design is simple and familiar:
+
+```text
+                     API / VIP / load balancer
+                              |
+          +-------------------+-------------------+
+          |                   |                   |
+     RKE2 server 1       RKE2 server 2       RKE2 server 3
+     control plane       control plane       control plane
+     embedded etcd       embedded etcd       embedded etcd
+          |                   |                   |
+          +-------------- quorum ----------------+
+                              |
+                  +-----------+-----------+
+                  |                       |
+             CPU workers             GPU workers
+                                          |
+                                 NVIDIA GPU Operator
+                                          |
+                                AI training / serving
+```
+
+RKE2 recommends an odd number of server nodes, with three recommended for HA.
+
+Official references:
+
+- RKE2 HA: <https://docs.rke2.io/install/ha>
+- RKE2 embedded datastore: <https://docs.rke2.io/datastore/embedded>
+
+### 3. Security and compliance orientation
+
+RKE2 is positioned as an enterprise-ready Kubernetes distribution focused on security and compliance. Its documentation includes CIS hardening guidance, FIPS support, and Kubernetes secrets-encryption support.
+
+Official references:
+
+- RKE2 overview: <https://docs.rke2.io/>
+- CIS hardening: <https://docs.rke2.io/security/hardening_guide>
+- FIPS support: <https://docs.rke2.io/security/fips_support>
+- Secrets encryption: <https://docs.rke2.io/security/secrets_encryption>
+
+### 4. Dedicated NVIDIA GPU guidance
+
+RKE2 has explicit documentation for deploying NVIDIA GPU Operator with its `containerd` layout.
+
+- RKE2 GPU Operator guide: <https://docs.rke2.io/add-ons/gpu_operators>
+
+## What about K3s?
+
+K3s is still a valid AI platform.
+
+The current NVIDIA GPU Operator support matrix validates K3s on recent Ubuntu/Kubernetes combinations, including Ubuntu 24.04 and Ubuntu 26.04.
+
+So this is technically valid:
+
+```text
+Ubuntu
+  |
+K3s
+  |
+containerd
+  |
+NVIDIA GPU Operator
+  |
+GPU workloads
+```
+
+Official reference:
+
+- NVIDIA GPU Operator platform support: <https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/platform-support.html>
+
+The difference is support positioning:
+
+| Area | K3s | RKE2 |
+|---|---|---|
+| Lightweight/simple operations | Excellent | Very good |
+| GPU Operator validation | Yes | Yes |
+| NVIDIA AI Enterprise bare-metal platform listing | Not currently listed as an orchestration platform | Yes |
+| Network Operator in AI Enterprise matrix | Not as a K3s platform entry | Yes |
+| Run:ai in AI Enterprise matrix | Not as a K3s platform entry | Yes |
+| Security/compliance focus | Good | Stronger |
+| Edge/small footprint | Excellent | Good |
+| Production AI Factory default | Good for small/medium | **Recommended** |
+
+Therefore the recommendation is not "K3s cannot do AI." It can. The recommendation is that **RKE2 has the stronger current enterprise support path for a serious self-hosted NVIDIA-oriented AI Factory**.
+
+## What about upstream Kubernetes?
+
+Choose upstream Kubernetes when direct alignment with NVIDIA reference architectures and maximum component control matter more than operational simplicity.
+
+It is a strong option for organizations with a mature Kubernetes platform team that wants explicit ownership of:
+
+- CNI;
+- PKI;
+- control-plane configuration;
+- etcd lifecycle;
+- upgrades;
+- cluster bootstrap automation.
+
+For a smaller team, RKE2 usually offers a better balance between control and operational overhead.
+
+## What about OpenShift?
+
+OpenShift is a strong option for a large enterprise that already standardizes on Red Hat and wants an integrated platform, strong governance, and vendor-backed lifecycle management.
+
+It is also directly represented in NVIDIA AI Enterprise support matrices.
+
+The trade-off is significantly more platform complexity and resource overhead than RKE2 or K3s.
+
+## Managed AWS alternative
+
+If self-hosting the Kubernetes control plane is no longer a requirement, **Amazon EKS** becomes a strong alternative. NVIDIA AI Enterprise 8.2 includes EKS in its managed-Kubernetes support matrix.
+
+```text
+AWS EKS
+  |
+  +-- CPU node groups
+  +-- GPU EC2 node groups
+          |
+          +-- GPU Operator
+          +-- Kueue / Run:ai
+          +-- KServe / KubeRay / NIM
+```
+
+For this repository, however, the goal remains self-managed Kubernetes, so RKE2 is the better architectural comparison.
+
+## Recommended ranking for this project
+
+| Rank | Platform | Best fit |
+|---:|---|---|
+| **1** | **RKE2** | Self-hosted production AI Factory |
+| **2** | **Upstream Kubernetes** | Maximum control and closest NVIDIA reference alignment |
+| **3** | **OpenShift** | Large/compliance-heavy enterprise |
+| **4** | **K3s** | Lightweight, edge, small/medium AI, labs and inference |
+| **5** | **Charmed Kubernetes** | Canonical/Ubuntu-focused organizations |
+| Managed | **Amazon EKS** | AWS-managed control plane |
+
+## Recommended production topology
+
+```text
+                       stable Kubernetes API endpoint
+                                  |
+                 +----------------+----------------+
+                 |                |                |
+           RKE2 server 1    RKE2 server 2    RKE2 server 3
+           Ubuntu 24.04     Ubuntu 24.04     Ubuntu 24.04
+           CPU / etcd       CPU / etcd       CPU / etcd
+                 |                |                |
+                 +---------- HA quorum ------------+
+                                  |
+              +-------------------+-------------------+
+              |                                       |
+        CPU worker pool                         GPU worker pool
+        platform services                       AI workloads
+                                                      |
+                                           NVIDIA GPU Operator
+                                           DCGM / observability
+                                                      |
+                               training / inference / RAG / agents
+```
+
+Keep the control plane on CPU nodes. etcd, kube-apiserver, controllers, Argo CD and cert-manager do not need expensive GPUs. GPU capacity should scale independently and be reserved for AI workloads.
+
+## Repository evolution
+
+Do not remove the current K3s profile. Treat the two distributions as profiles for different goals:
+
+```text
+K3s profile
+  -> lightweight/general Kubernetes
+  -> development, learning, smaller production
+  -> current repository path
+
+RKE2 AI Factory profile
+  -> production GPU platform
+  -> HA control plane
+  -> dedicated GPU workers
+  -> NVIDIA enterprise-oriented stack
+```
+
+Suggested evolution:
+
+1. Keep the current Ubuntu + K3s platform for general Kubernetes development.
+2. Build and validate a three-server HA topology.
+3. Add an RKE2 AI Factory profile based on Ubuntu 24.04 LTS.
+4. Add dedicated GPU agents and GPU Operator.
+5. Add Kueue or Run:ai, DCGM/Prometheus, and model-serving components only when needed.
+6. Add Network Operator, RDMA, GPUDirect RDMA and high-throughput shared storage only when distributed workloads require them.
+
+## Final decision
+
+For this repository, the recommended direction is:
+
+> **Keep K3s as the lightweight/default Kubernetes profile, and use RKE2 as the future production AI Factory profile.**
+
+Recommended production AI Factory baseline:
+
+```text
+Ubuntu Server 24.04 LTS
++
+RKE2
++
+3 CPU control-plane/etcd servers
++
+dedicated GPU agents
++
+NVIDIA GPU Operator
++
+Network Operator only where required
++
+Kueue or Run:ai
++
+KServe / KubeRay / NIM according to workload
++
+Prometheus / Grafana / DCGM
++
+Argo CD
+```
+
+## Official sources
+
+- NVIDIA AI Enterprise 8.2 support matrix: <https://docs.nvidia.com/ai-enterprise/release-8/latest/support/support-matrix-8/8.2.html>
+- NVIDIA GPU Operator platform support: <https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/platform-support.html>
+- NVIDIA Network Operator platform support: <https://docs.nvidia.com/networking/display/kubernetes2670/platform-support.html>
+- NVIDIA Enterprise Reference Architecture: <https://docs.nvidia.com/enterprise-reference-architectures/enterprise-rag-deployment-guide/latest/enterprise-ra-overview.html>
+- RKE2: <https://docs.rke2.io/>
+- RKE2 HA: <https://docs.rke2.io/install/ha>
+- RKE2 embedded datastore: <https://docs.rke2.io/datastore/embedded>
+- RKE2 GPU Operator: <https://docs.rke2.io/add-ons/gpu_operators>
+- RKE2 CIS hardening: <https://docs.rke2.io/security/hardening_guide>
+- RKE2 FIPS support: <https://docs.rke2.io/security/fips_support>
