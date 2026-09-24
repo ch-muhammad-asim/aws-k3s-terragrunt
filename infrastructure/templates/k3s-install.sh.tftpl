@@ -83,7 +83,7 @@ wait_for_server() {
   fi
 
   for attempt in $(seq 1 120); do
-    if curl -kfsS --connect-timeout 2 "$SERVER_URL/ping" >/dev/null 2>&1; then
+    if curl -kfsS --connect-timeout 2 "$SERVER_URL/cacerts" >/dev/null 2>&1; then
       echo "[k3s-bootstrap] bootstrap server is reachable at $SERVER_URL"
       return 0
     fi
