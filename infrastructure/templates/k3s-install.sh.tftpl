@@ -18,8 +18,10 @@ echo "[k3s-bootstrap] role: $NODE_ROLE"
 echo "[k3s-bootstrap] target version: ${k3s_version}"
 echo "[k3s-bootstrap] preparing Ubuntu host"
 
-apt-get update -y
-apt-get install -y --no-install-recommends ca-certificates curl snapd
+# Unattended upgrades commonly hold the dpkg lock on a fresh Ubuntu boot.
+APT_OPTS=(-o DPkg::Lock::Timeout=600)
+apt-get "$${APT_OPTS[@]}" update -y
+apt-get "$${APT_OPTS[@]}" install -y --no-install-recommends ca-certificates curl snapd
 
 for binary in curl systemctl; do
   command -v "$binary" >/dev/null 2>&1 || {
@@ -125,7 +127,8 @@ case "$NODE_ROLE" in
         --node-taint "CriticalAddonsOnly=true:NoExecute" \
         --tls-san "$PUBLIC_IP" \
         --tls-san "$PRIVATE_IP" \
-        --write-kubeconfig-mode 600 ${traefik_flag}
+        --write-kubeconfig-mode 600 ${traefik_flag} || \
+      echo "[k3s-bootstrap] first start failed (concurrent etcd join?); systemd will retry"
     ;;
 
   agent)
@@ -137,7 +140,8 @@ case "$NODE_ROLE" in
         --server "$SERVER_URL" \
         --token "$K3S_TOKEN" \
         --node-name "$NODE_NAME" \
-        --node-ip "$PRIVATE_IP"
+        --node-ip "$PRIVATE_IP" || \
+      echo "[k3s-bootstrap] first start failed; systemd will retry"
     ;;
 
   *)
@@ -151,7 +155,7 @@ if [ "$NODE_ROLE" = "agent" ]; then
   SERVICE_NAME="k3s-agent"
 fi
 
-for attempt in $(seq 1 120); do
+for attempt in $(seq 1 240); do
   if systemctl is-active --quiet "$SERVICE_NAME"; then
     if [ "$NODE_ROLE" != "server-init" ]; then
       echo "[k3s-bootstrap] $NODE_NAME is running"
