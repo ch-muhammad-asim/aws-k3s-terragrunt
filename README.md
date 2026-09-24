@@ -94,9 +94,9 @@ Required for deployment:
 
 `kubectl` is optional for post-deployment validation. The Helm CLI is not required for normal deployment.
 
-## Pluralsight AWS sandbox profile
+## Development lab profile
 
-This `dev/us-east-1` profile is intentionally sized for the Pluralsight AWS Cloud Sandbox:
+This `dev/us-east-1` profile is intentionally sized as a compact five-node K3s development lab:
 
 - region: `us-east-1`;
 - exactly 5 EC2 instances for this lab topology;
@@ -106,9 +106,8 @@ This `dev/us-east-1` profile is intentionally sized for the Pluralsight AWS Clou
 - no Spot Instances;
 - only server-1 consumes an Elastic IP.
 
-This sandbox profile intentionally uses 100 GiB gp3 root volumes on all five nodes. The control-plane nodes use `t3a.medium`, while the two workers remain `t3.small`.
+This lab profile intentionally uses 100 GiB gp3 root volumes on all five nodes. The control-plane nodes use `t3a.medium`, while the two workers remain `t3.small`.
 
-Reference: <https://help.pluralsight.com/hc/en-us/articles/24425443133076-AWS-cloud-sandbox>
 
 ## Pinned versions
 
@@ -238,7 +237,7 @@ Keep this aligned with the subnet. If the module requests `false` while the subn
 
 ## Deletion protection
 
-EC2 API termination protection and stop protection are enabled in the shared defaults, but the Pluralsight sandbox leaf explicitly disables both so the five temporary lab instances can be recreated and destroyed cleanly:
+EC2 API termination protection and stop protection are enabled in the shared defaults, but the development lab leaf explicitly disables both so the five temporary lab instances can be recreated and destroyed cleanly:
 
 ```hcl
 enable_termination_protection = false
@@ -286,7 +285,7 @@ Only server-1 receives an Elastic IP and publishes it through the `PublicIp` ins
 
 The bootstrap log is available on the node at `/var/log/k3s-bootstrap.log`, and also in `/var/log/cloud-init-output.log`.
 
-Because `user_data_replace_on_change` is enabled, editing the template replaces affected nodes rather than leaving running instances that no longer match the committed bootstrap. The Pluralsight leaf keeps deletion/stop protection disabled specifically so these lab replacements can proceed.
+Because `user_data_replace_on_change` is enabled, editing the template replaces affected nodes rather than leaving running instances that no longer match the committed bootstrap. The development lab leaf keeps deletion/stop protection disabled specifically so these lab replacements can proceed.
 
 ## Kubeconfig on your local machine
 
@@ -350,7 +349,7 @@ terragrunt run --all output
 
 ## Destroy
 
-The Pluralsight leaf already has EC2 termination/stop protection disabled, so destroy the whole graph directly through Terragrunt:
+The development lab leaf already has EC2 termination/stop protection disabled, so destroy the whole graph directly through Terragrunt:
 
 ```bash
 cd infrastructure/live/dev/us-east-1
@@ -393,7 +392,7 @@ Always review `terragrunt plan` after import because this revision manages the o
 - All nodes receive launch-time public addresses because the subnet has no NAT gateway; only server-1 also gets an EIP. K3s control-plane/etcd/agent traffic stays on private addresses and the shared security group.
 - EBS is encrypted.
 - K3s kubeconfig credentials live in sensitive Terraform state and in the local kubeconfig file, which is written with mode `600` outside the repository.
-- EC2 API termination and stop protection are disabled in this temporary Pluralsight sandbox profile so repeated lab teardown/rebuilds work normally.
+- EC2 API termination and stop protection are disabled in this temporary development lab profile so repeated lab teardown/rebuilds work normally.
 - Traefik dashboard is not public by default.
 - Never commit kubeconfig, Terraform state, cloud credentials, Cloudflare tokens or private keys.
 
