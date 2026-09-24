@@ -53,6 +53,7 @@ variable "instances" {
     instance_type    = optional(string)
     subnet_id        = optional(string)
     private_ip       = optional(string)
+    allocate_eip     = optional(bool, true)
     root_volume_size = optional(number)
     user_data        = optional(string)
     tags             = optional(map(string), {})
