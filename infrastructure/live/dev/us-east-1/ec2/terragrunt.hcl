@@ -43,8 +43,8 @@ inputs = {
   subnet_id        = dependency.vpc.outputs.public_subnet_ids[0]
   root_volume_size = 100
 
-  # Pluralsight Cloud Sandbox is temporary, so do not make nodes difficult to
-  # replace or destroy during repeated lab runs.
+  # This development lab is intentionally disposable, so do not make nodes
+  # difficult to replace or destroy during repeated runs.
   enable_termination_protection = false
   enable_stop_protection        = false
 
