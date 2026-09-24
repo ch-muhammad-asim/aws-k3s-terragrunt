@@ -37,7 +37,7 @@ Every box is an independent Terragrunt unit with its own Terraform state. Terrag
 - `traefik`, `cert-manager` and `argocd` use a reusable Terraform `helm_release` module, but are planned/applied/destroyed through Terragrunt.
 - K3s is installed by cloud-init on first boot, so there is no Run Command association to converge and no SSH access anywhere in the workflow. Downstream Terragrunt units consume the K3s unit's outputs, so no kubeconfig bootstrap step is required for deployment.
 
-The current compute profile is a single EC2 K3s server/worker. It is intentionally non-HA; the module/state boundaries and map-driven EC2 model allow later evolution toward multi-node HA.
+The current `dev/us-east-1` compute profile is a five-node K3s lab: **3 K3s servers/control-plane nodes using embedded etcd + 2 K3s agent/worker nodes**. The first server initializes the etcd cluster, the other two servers join it, and both workers join through the first server's private address.
 
 ## Repository layout
 
@@ -190,65 +190,43 @@ terragrunt run --all init
 
 ## EC2 nodes use `for_each`
 
-The EC2 module does not use a singleton resource or `count`. It creates EC2 instances, EIPs and EIP associations from the `instances` map using Terraform `for_each`.
+The EC2 module does not use a singleton resource or `count`. It creates EC2 instances from the `instances` map using Terraform `for_each`, with optional per-node EIPs.
 
-The current default intentionally contains one node:
-
-```hcl
-instances = {
-  primary = {}
-}
-```
-
-The key becomes the stable Terraform resource address, for example:
+The current sandbox topology is:
 
 ```text
-aws_instance.this["primary"]
-aws_eip.this["primary"]
-aws_eip_association.this["primary"]
+primary   -> server-1 -> 10.20.1.10 -> t3.medium -> EIP -> cluster-init
+server-2  -> server-2 -> 10.20.1.11 -> t3.medium -> joins embedded etcd
+server-3  -> server-3 -> 10.20.1.12 -> t3.medium -> joins embedded etcd
+worker-1  -> worker-1 -> 10.20.1.21 -> t3.small  -> K3s agent
+worker-2  -> worker-2 -> 10.20.1.22 -> t3.small  -> K3s agent
 ```
 
-Additional compute can be declared without changing the resource model:
+The `primary` map key remains the backwards-compatible API/kubeconfig anchor. Only that node gets an Elastic IP; the other four nodes keep normal public launch addresses for outbound package downloads and communicate with the cluster over private addresses.
 
-```hcl
-instances = {
-  primary = {}
+Each entry can override `name`, `instance_type`, `subnet_id`, `private_ip`, `allocate_eip`, `root_volume_size`, `user_data`, and `tags`. The per-node bootstrap is what turns the map into one K3s cluster instead of five independent servers.
 
-  worker-1 = {
-    name          = "k3s-dev-us-east-1-worker-1"
-    instance_type = "t3.medium"
-  }
-
-  worker-2 = {
-    name          = "k3s-dev-us-east-1-worker-2"
-    instance_type = "t3.medium"
-  }
-}
-```
-
-Per-node `name`, `instance_type`, `subnet_id`, `root_volume_size` and `tags` may be overridden; omitted values inherit the module defaults.
-
-The current K3s unit still consumes the singular outputs for `primary_instance_key = "primary"`, so **adding more EC2 map entries only creates compute; it does not yet join those additional machines to K3s**. Multi-server/agent K3s bootstrap should be implemented as a separate cluster-topology change rather than silently turning extra EC2 instances into cluster members.
+The K3s unit still consumes the singular `primary_instance_key = "primary"` outputs to retrieve one kubeconfig. The control plane itself has three etcd/server members, but the operator-facing API endpoint is intentionally anchored to server-1's EIP for this lab; adding a load balancer would be the next step for a fully HA client endpoint.
 
 For environments that already created the old singleton EC2/EIP resources, Terraform `moved` blocks migrate the existing state addresses to the `"primary"` `for_each` addresses. Review `terragrunt plan` before applying: the expected result is an address move, not EC2/EIP replacement, when no other settings changed.
 
 ## Node public addressing
 
-The node runs in a public subnet and there is no NAT gateway, so it needs a public address at launch for the user-data bootstrap to reach the internet. The subnet also sets `map_public_ip_on_launch`, so the module default matches it:
+All five nodes run in the public subnet and there is no NAT gateway, so each needs a public address at launch for package downloads and K3s installation. The subnet also sets `map_public_ip_on_launch`, so the module default matches it:
 
 ```hcl
 associate_public_ip_address = true
 ```
 
-Keep this aligned with the subnet. If the module requests `false` while the subnet assigns one anyway, the attribute never converges and every `terragrunt plan` reports an EC2 replacement even when nothing else changed. The Elastic IP is associated immediately afterwards and remains the stable endpoint.
+Keep this aligned with the subnet. If the module requests `false` while the subnet assigns one anyway, the attribute never converges and every `terragrunt plan` reports an EC2 replacement even when nothing else changed. Only `primary/server-1` allocates an Elastic IP; all K3s server/agent join traffic uses private addresses.
 
 ## Deletion protection
 
-EC2 API termination protection and stop protection are enabled through Terragrunt in `infrastructure/live/_common/ec2.hcl`:
+EC2 API termination protection and stop protection are enabled in the shared defaults, but the Pluralsight sandbox leaf explicitly disables both so the five temporary lab instances can be recreated and destroyed cleanly:
 
 ```hcl
-enable_termination_protection = true
-enable_stop_protection        = true
+enable_termination_protection = false
+enable_stop_protection        = false
 ```
 
 They are ordinary managed attributes, so clearing them in the console produces drift that the next `terragrunt plan` reports and `terragrunt apply` corrects. Never set them with `aws ec2 modify-instance-attribute`.
@@ -297,7 +275,9 @@ export TG_OPERATOR_CIDR="203.0.113.0/24"
 
 K3s is installed by the script at `infrastructure/templates/k3s-install.sh.tftpl`, rendered by Terragrunt and delivered as EC2 user data. The node converges during first boot with no Systems Manager association, no SSH, and no operator-side provisioning step.
 
-The Elastic IP is allocated before the instance and published to the node as the `PublicIp` instance tag, so the script reads it from IMDSv2 instance tags and adds it to the API server TLS SAN list. It deliberately does not rely on `public-ipv4`, which reports the launch-time address until the EIP association completes. It then writes an operator-facing kubeconfig to `/etc/rancher/k3s/k3s-public.yaml` with the public endpoint already substituted.
+The bootstrap is role-aware. `server-1` runs `k3s server --cluster-init`, `server-2` and `server-3` join the embedded-etcd control plane with the same generated token, and both workers join as `k3s agent` nodes. The module generates one stable random join token in Terraform state and substitutes it into every node's user data.
+
+Only server-1 receives an Elastic IP and publishes it through the `PublicIp` instance tag. Other nodes fall back to their launch-time public address for TLS metadata, while cluster membership always uses server-1's fixed private address `10.20.1.10:6443`. Server-1 does not publish `/etc/rancher/k3s/k3s-public.yaml` until all five nodes have registered, preventing downstream Helm units from racing a partial cluster.
 
 The bootstrap log is available on the node at `/var/log/k3s-bootstrap.log`, and also in `/var/log/cloud-init-output.log`.
 
@@ -415,7 +395,7 @@ Always review `terragrunt plan` after import because this revision manages the o
 - The node holds a public IP because the subnet has no NAT gateway; inbound access is restricted by security group rules, not by private addressing.
 - EBS is encrypted.
 - K3s kubeconfig credentials live in sensitive Terraform state and in the local kubeconfig file, which is written with mode `600` outside the repository.
-- EC2 API termination and stop protection are enabled.
+- EC2 API termination and stop protection are disabled in this temporary Pluralsight sandbox profile so repeated lab teardown/rebuilds work normally.
 - Traefik dashboard is not public by default.
 - Never commit kubeconfig, Terraform state, cloud credentials, Cloudflare tokens or private keys.
 
