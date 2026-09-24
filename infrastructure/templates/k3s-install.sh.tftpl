@@ -108,8 +108,7 @@ case "$NODE_ROLE" in
         --node-ip "$PRIVATE_IP" \
         --tls-san "$PUBLIC_IP" \
         --tls-san "$PRIVATE_IP" \
-        --write-kubeconfig-mode 600 \
-        ${traefik_flag}
+        --write-kubeconfig-mode 600 ${traefik_flag}
     ;;
 
   server)
@@ -124,8 +123,7 @@ case "$NODE_ROLE" in
         --node-ip "$PRIVATE_IP" \
         --tls-san "$PUBLIC_IP" \
         --tls-san "$PRIVATE_IP" \
-        --write-kubeconfig-mode 600 \
-        ${traefik_flag}
+        --write-kubeconfig-mode 600 ${traefik_flag}
     ;;
 
   agent)
@@ -161,7 +159,8 @@ for attempt in $(seq 1 120); do
     # Do not publish the operator kubeconfig until the complete lab topology has
     # registered. This keeps downstream Helm units from racing a partial cluster.
     REGISTERED_NODES="$(/usr/local/bin/k3s kubectl get nodes --no-headers 2>/dev/null | wc -l | tr -d ' ')"
-    if [ "$REGISTERED_NODES" -ge "$EXPECTED_NODE_COUNT" ]; then
+    READY_NODES="$(/usr/local/bin/k3s kubectl get nodes --no-headers 2>/dev/null | awk '$2 ~ /^Ready/ { count++ } END { print count + 0 }')"
+    if [ "$REGISTERED_NODES" -ge "$EXPECTED_NODE_COUNT" ] && [ "$READY_NODES" -ge "$EXPECTED_NODE_COUNT" ]; then
       /usr/local/bin/k3s --version
       /usr/local/bin/k3s kubectl get nodes -o wide
 
@@ -170,11 +169,11 @@ for attempt in $(seq 1 120); do
         /etc/rancher/k3s/k3s.yaml > /etc/rancher/k3s/k3s-public.yaml
       chmod 0600 /etc/rancher/k3s/k3s-public.yaml
 
-      echo "[k3s-bootstrap] all $REGISTERED_NODES nodes registered; kubeconfig published"
+      echo "[k3s-bootstrap] all $READY_NODES/$EXPECTED_NODE_COUNT nodes Ready; kubeconfig published"
       exit 0
     fi
 
-    echo "[k3s-bootstrap] waiting for all nodes: $REGISTERED_NODES/$EXPECTED_NODE_COUNT"
+    echo "[k3s-bootstrap] waiting for all nodes: registered=$REGISTERED_NODES/$EXPECTED_NODE_COUNT ready=$READY_NODES/$EXPECTED_NODE_COUNT"
   fi
 
   sleep 5
