@@ -38,9 +38,10 @@ dependency "vpc" {
 }
 
 inputs = {
-  name      = "${include.root.locals.cluster_name}-node"
-  vpc_id    = dependency.vpc.outputs.vpc_id
-  subnet_id = dependency.vpc.outputs.public_subnet_ids[0]
+  name             = "${include.root.locals.cluster_name}-node"
+  vpc_id           = dependency.vpc.outputs.vpc_id
+  subnet_id        = dependency.vpc.outputs.public_subnet_ids[0]
+  root_volume_size = 100
 
   # Pluralsight Cloud Sandbox is temporary, so do not make nodes difficult to
   # replace or destroy during repeated lab runs.
@@ -63,7 +64,7 @@ inputs = {
   instances = {
     primary = {
       name          = "${include.root.locals.cluster_name}-server-1"
-      instance_type = "t3.medium"
+      instance_type = "t3a.medium"
       private_ip    = local.bootstrap_server_private_ip
       allocate_eip  = true
       tags = {
@@ -83,7 +84,7 @@ inputs = {
 
     server-2 = {
       name          = "${include.root.locals.cluster_name}-server-2"
-      instance_type = "t3.medium"
+      instance_type = "t3a.medium"
       private_ip    = "10.20.1.11"
       allocate_eip  = false
       tags = {
@@ -103,7 +104,7 @@ inputs = {
 
     server-3 = {
       name          = "${include.root.locals.cluster_name}-server-3"
-      instance_type = "t3.medium"
+      instance_type = "t3a.medium"
       private_ip    = "10.20.1.12"
       allocate_eip  = false
       tags = {

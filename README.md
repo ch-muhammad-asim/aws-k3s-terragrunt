@@ -100,13 +100,13 @@ This `dev/us-east-1` profile is intentionally sized for the Pluralsight AWS Clou
 
 - region: `us-east-1`;
 - exactly 5 EC2 instances for this lab topology;
-- control plane: 3 × `t3.medium`;
+- control plane: 3 × `t3a.medium`;
 - workers: 2 × `t3.small`;
-- root disks: 30 GiB gp3;
+- root disks: 100 GiB gp3 on every node;
 - no Spot Instances;
 - only server-1 consumes an Elastic IP.
 
-Pluralsight's current AWS sandbox documentation allows `t3` micro/small/medium instances, up to 100 GB per EC2 volume, and `us-east-1`/`us-west-2`. The published general sandbox limit is higher than this five-node profile, but this repository deliberately stays at five nodes for the lab.
+This sandbox profile intentionally uses 100 GiB gp3 root volumes on all five nodes. The control-plane nodes use `t3a.medium`, while the two workers remain `t3.small`.
 
 Reference: <https://help.pluralsight.com/hc/en-us/articles/24425443133076-AWS-cloud-sandbox>
 
@@ -211,9 +211,9 @@ The EC2 module does not use a singleton resource or `count`. It creates EC2 inst
 The current sandbox topology is:
 
 ```text
-primary   -> server-1 -> 10.20.1.10 -> t3.medium -> EIP -> cluster-init
-server-2  -> server-2 -> 10.20.1.11 -> t3.medium -> joins embedded etcd
-server-3  -> server-3 -> 10.20.1.12 -> t3.medium -> joins embedded etcd
+primary   -> server-1 -> 10.20.1.10 -> t3a.medium -> EIP -> cluster-init
+server-2  -> server-2 -> 10.20.1.11 -> t3a.medium -> joins embedded etcd
+server-3  -> server-3 -> 10.20.1.12 -> t3a.medium -> joins embedded etcd
 worker-1  -> worker-1 -> 10.20.1.21 -> t3.small  -> K3s agent
 worker-2  -> worker-2 -> 10.20.1.22 -> t3.small  -> K3s agent
 ```
