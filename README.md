@@ -32,7 +32,7 @@ Argo CD
 Every box is an independent Terragrunt unit with its own Terraform state. Terragrunt dependency blocks define the order.
 
 - `vpc` owns AWS networking.
-- `ec2` owns EC2, EIP, IAM/SSM, security groups and EBS. EC2 instances and their EIPs are created from a map with Terraform `for_each` so additional nodes have stable key-based resource addresses. It also renders the node bootstrap and delivers it as EC2 user data.
+- `ec2` owns EC2, optional per-node EIPs, IAM/SSM, security groups and EBS. EC2 instances are created from a map with Terraform `for_each` so all five nodes have stable key-based resource addresses. It also renders the role-aware K3s bootstrap and delivers it as EC2 user data.
 - `k3s` retrieves the resulting kubeconfig onto the machine running Terragrunt and exposes the client material to the Helm units. It does not install anything itself.
 - `traefik`, `cert-manager` and `argocd` use a reusable Terraform `helm_release` module, but are planned/applied/destroyed through Terragrunt.
 - K3s is installed by cloud-init on first boot, so there is no Run Command association to converge and no SSH access anywhere in the workflow. Downstream Terragrunt units consume the K3s unit's outputs, so no kubeconfig bootstrap step is required for deployment.
@@ -94,6 +94,22 @@ Required for deployment:
 
 `kubectl` is optional for post-deployment validation. The Helm CLI is not required for normal deployment.
 
+## Pluralsight AWS sandbox profile
+
+This `dev/us-east-1` profile is intentionally sized for the Pluralsight AWS Cloud Sandbox:
+
+- region: `us-east-1`;
+- exactly 5 EC2 instances for this lab topology;
+- control plane: 3 × `t3.medium`;
+- workers: 2 × `t3.small`;
+- root disks: 30 GiB gp3;
+- no Spot Instances;
+- only server-1 consumes an Elastic IP.
+
+Pluralsight's current AWS sandbox documentation allows `t3` micro/small/medium instances, up to 100 GB per EC2 volume, and `us-east-1`/`us-west-2`. The published general sandbox limit is higher than this five-node profile, but this repository deliberately stays at five nodes for the lab.
+
+Reference: <https://help.pluralsight.com/hc/en-us/articles/24425443133076-AWS-cloud-sandbox>
+
 ## Pinned versions
 
 - K3s `v1.36.4+k3s1`
@@ -146,7 +162,7 @@ that has no outputs, but mock outputs were provided.
 
 That is expected during `init` and fresh-stack planning. The dependency does not have real Terraform outputs yet because nothing has been applied, so the leaf configuration uses its declared mock outputs for commands where mocks are explicitly allowed.
 
-A successful `init` means the remote backend has been created/configured and Terraform providers/modules have been initialized. **It does not create the VPC, EC2 instance, K3s cluster, or Helm releases.** Infrastructure creation starts with `apply`.
+A successful `init` means the remote backend has been created/configured and Terraform providers/modules have been initialized. **It does not create the VPC, EC2 instances, K3s cluster, or Helm releases.** Infrastructure creation starts with `apply`.
 
 No manual `aws s3` command, Makefile target, direct Terraform command, or pre-created bucket is required.
 
@@ -229,18 +245,7 @@ enable_termination_protection = false
 enable_stop_protection        = false
 ```
 
-They are ordinary managed attributes, so clearing them in the console produces drift that the next `terragrunt plan` reports and `terragrunt apply` corrects. Never set them with `aws ec2 modify-instance-attribute`.
-
-Both attributes propagate slowly. A read taken seconds after `apply` can still report `false` and settles about a minute later, so re-read before concluding that an apply failed.
-
-While protection is on, AWS refuses to replace or terminate the node. Any run that needs to do so must clear it first, apply, and then re-enable it:
-
-```bash
-cd infrastructure/live/dev/us-east-1/ec2
-TF_VAR_enable_termination_protection=false TF_VAR_enable_stop_protection=false terragrunt apply
-```
-
-This applies to a node replacement triggered by editing the user-data bootstrap, as well as to `destroy`.
+The shared defaults remain protected for non-sandbox environments. In this leaf profile, both values are already `false`, so `terragrunt apply`, replacement after a bootstrap change, and `terragrunt destroy` can operate normally during a temporary lab session.
 
 ## Work on one component
 
@@ -281,7 +286,7 @@ Only server-1 receives an Elastic IP and publishes it through the `PublicIp` ins
 
 The bootstrap log is available on the node at `/var/log/k3s-bootstrap.log`, and also in `/var/log/cloud-init-output.log`.
 
-Because `user_data_replace_on_change` is enabled, editing the template replaces the node rather than leaving a running instance that no longer matches the committed bootstrap. See the deletion protection section below before making that change.
+Because `user_data_replace_on_change` is enabled, editing the template replaces affected nodes rather than leaving running instances that no longer match the committed bootstrap. The Pluralsight leaf keeps deletion/stop protection disabled specifically so these lab replacements can proceed.
 
 ## Kubeconfig on your local machine
 
@@ -345,14 +350,7 @@ terragrunt run --all output
 
 ## Destroy
 
-Deletion protection must be cleared before the EC2 node can be destroyed, otherwise the run fails on the `ec2` unit:
-
-```bash
-cd infrastructure/live/dev/us-east-1/ec2
-TF_VAR_enable_termination_protection=false TF_VAR_enable_stop_protection=false terragrunt apply
-```
-
-Then destroy the whole graph through Terragrunt:
+The Pluralsight leaf already has EC2 termination/stop protection disabled, so destroy the whole graph directly through Terragrunt:
 
 ```bash
 cd infrastructure/live/dev/us-east-1
@@ -392,7 +390,7 @@ Always review `terragrunt plan` after import because this revision manages the o
 - Kubernetes API `6443` is restricted to `TG_OPERATOR_CIDR`.
 - SSH `22` is not exposed; the node uses AWS Systems Manager.
 - IMDSv2 is required.
-- The node holds a public IP because the subnet has no NAT gateway; inbound access is restricted by security group rules, not by private addressing.
+- All nodes receive launch-time public addresses because the subnet has no NAT gateway; only server-1 also gets an EIP. K3s control-plane/etcd/agent traffic stays on private addresses and the shared security group.
 - EBS is encrypted.
 - K3s kubeconfig credentials live in sensitive Terraform state and in the local kubeconfig file, which is written with mode `600` outside the repository.
 - EC2 API termination and stop protection are disabled in this temporary Pluralsight sandbox profile so repeated lab teardown/rebuilds work normally.
