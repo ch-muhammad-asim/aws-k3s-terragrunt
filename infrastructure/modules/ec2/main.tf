@@ -31,10 +31,16 @@ locals {
       instance_type    = coalesce(try(instance.instance_type, null), var.instance_type)
       subnet_id        = coalesce(try(instance.subnet_id, null), var.subnet_id)
       private_ip       = try(instance.private_ip, null)
+      allocate_eip     = try(instance.allocate_eip, true)
       root_volume_size = coalesce(try(instance.root_volume_size, null), var.root_volume_size)
       user_data        = try(instance.user_data, null) != null ? instance.user_data : var.user_data
       tags             = coalesce(try(instance.tags, null), {})
     }
+  }
+
+  eip_instances = {
+    for key, instance in local.instances : key => instance
+    if instance.allocate_eip
   }
 }
 
@@ -56,7 +62,7 @@ moved {
 }
 
 resource "aws_eip" "this" {
-  for_each = local.instances
+  for_each = local.eip_instances
 
   domain = "vpc"
 
@@ -188,16 +194,22 @@ resource "aws_instance" "this" {
     instance_metadata_tags = "enabled"
   }
 
-  tags = merge(local.tags, each.value.tags, {
-    Name     = each.value.name
-    PublicIp = aws_eip.this[each.key].public_ip
-  })
+  tags = merge(
+    local.tags,
+    each.value.tags,
+    {
+      Name = each.value.name
+    },
+    each.value.allocate_eip ? {
+      PublicIp = aws_eip.this[each.key].public_ip
+    } : {},
+  )
 
   depends_on = [aws_iam_role_policy_attachment.ssm]
 }
 
 resource "aws_eip_association" "this" {
-  for_each = local.instances
+  for_each = local.eip_instances
 
   instance_id   = aws_instance.this[each.key].id
   allocation_id = aws_eip.this[each.key].id
