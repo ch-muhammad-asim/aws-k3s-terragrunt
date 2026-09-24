@@ -37,7 +37,7 @@ Every box is an independent Terragrunt unit with its own Terraform state. Terrag
 - `traefik`, `cert-manager` and `argocd` use a reusable Terraform `helm_release` module, but are planned/applied/destroyed through Terragrunt.
 - K3s is installed by cloud-init on first boot, so there is no Run Command association to converge and no SSH access anywhere in the workflow. Downstream Terragrunt units consume the K3s unit's outputs, so no kubeconfig bootstrap step is required for deployment.
 
-The current `dev/us-east-1` compute profile is a five-node K3s lab: **3 K3s servers/control-plane nodes using embedded etcd + 2 K3s agent/worker nodes**. The first server initializes the etcd cluster, the other two servers join it, and both workers join through the first server's private address.
+The current `dev/us-east-1` compute profile is a five-node K3s lab: **3 K3s servers/control-plane nodes using embedded etcd + 2 K3s agent/worker nodes**. The first server initializes the etcd cluster, the other two servers join it, and both workers join through the first server's private address. The three servers use the `CriticalAddonsOnly=true:NoExecute` taint so normal application workloads land on the two workers.
 
 ## Repository layout
 
