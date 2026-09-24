@@ -43,9 +43,9 @@ inputs = {
   subnet_id        = dependency.vpc.outputs.public_subnet_ids[0]
   root_volume_size = 100
 
-  # This development lab is intentionally disposable, so do not make nodes
-  # difficult to replace or destroy during repeated runs.
-  enable_termination_protection = false
+  # Protect instances from accidental termination. Stop protection remains
+  # disabled so nodes can still be stopped during maintenance or lab work.
+  enable_termination_protection = true
   enable_stop_protection        = false
 
   # K3s control-plane, embedded-etcd, kubelet and CNI traffic stays private and
@@ -124,7 +124,7 @@ inputs = {
 
     worker-1 = {
       name          = "${include.root.locals.cluster_name}-worker-1"
-      instance_type = "t3.small"
+      instance_type = "t3a.medium"
       private_ip    = "10.20.1.21"
       allocate_eip  = false
       tags = {
@@ -144,7 +144,7 @@ inputs = {
 
     worker-2 = {
       name          = "${include.root.locals.cluster_name}-worker-2"
-      instance_type = "t3.small"
+      instance_type = "t3a.medium"
       private_ip    = "10.20.1.22"
       allocate_eip  = false
       tags = {

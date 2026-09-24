@@ -101,12 +101,12 @@ This `dev/us-east-1` profile is intentionally sized as a compact five-node K3s d
 - region: `us-east-1`;
 - exactly 5 EC2 instances for this lab topology;
 - control plane: 3 × `t3a.medium`;
-- workers: 2 × `t3.small`;
+- workers: 2 × `t3a.medium`;
 - root disks: 100 GiB gp3 on every node;
 - no Spot Instances;
 - only server-1 consumes an Elastic IP.
 
-This lab profile intentionally uses 100 GiB gp3 root volumes on all five nodes. The control-plane nodes use `t3a.medium`, while the two workers remain `t3.small`.
+This lab profile intentionally uses 100 GiB gp3 root volumes on all five nodes. The control-plane nodes use `t3a.medium`, while the two workers remain `t3a.medium`.
 
 
 ## Pinned versions
@@ -213,8 +213,8 @@ The current sandbox topology is:
 primary   -> server-1 -> 10.20.1.10 -> t3a.medium -> EIP -> cluster-init
 server-2  -> server-2 -> 10.20.1.11 -> t3a.medium -> joins embedded etcd
 server-3  -> server-3 -> 10.20.1.12 -> t3a.medium -> joins embedded etcd
-worker-1  -> worker-1 -> 10.20.1.21 -> t3.small  -> K3s agent
-worker-2  -> worker-2 -> 10.20.1.22 -> t3.small  -> K3s agent
+worker-1  -> worker-1 -> 10.20.1.21 -> t3a.medium  -> K3s agent
+worker-2  -> worker-2 -> 10.20.1.22 -> t3a.medium  -> K3s agent
 ```
 
 The `primary` map key remains the backwards-compatible API/kubeconfig anchor. Only that node gets an Elastic IP; the other four nodes keep normal public launch addresses for outbound package downloads and communicate with the cluster over private addresses.
@@ -237,14 +237,14 @@ Keep this aligned with the subnet. If the module requests `false` while the subn
 
 ## Deletion protection
 
-EC2 API termination protection and stop protection are enabled in the shared defaults, but the development lab leaf explicitly disables both so the five temporary lab instances can be recreated and destroyed cleanly:
+EC2 API termination protection is enabled for all five nodes to prevent accidental deletion. Stop protection remains disabled:
 
 ```hcl
-enable_termination_protection = false
+enable_termination_protection = true
 enable_stop_protection        = false
 ```
 
-The shared defaults remain protected for non-sandbox environments. In this leaf profile, both values are already `false`, so `terragrunt apply`, replacement after a bootstrap change, and `terragrunt destroy` can operate normally during a temporary lab session.
+Because termination protection is enabled, any intentional node replacement or destroy must first set `enable_termination_protection = false` and apply that change. Stop protection remains disabled.
 
 ## Work on one component
 
@@ -285,7 +285,7 @@ Only server-1 receives an Elastic IP and publishes it through the `PublicIp` ins
 
 The bootstrap log is available on the node at `/var/log/k3s-bootstrap.log`, and also in `/var/log/cloud-init-output.log`.
 
-Because `user_data_replace_on_change` is enabled, editing the template replaces affected nodes rather than leaving running instances that no longer match the committed bootstrap. The development lab leaf keeps deletion/stop protection disabled specifically so these lab replacements can proceed.
+Because `user_data_replace_on_change` is enabled, editing the template can require node replacement. Since termination protection is enabled, disable it explicitly and apply before any intentional replacement.
 
 ## Kubeconfig on your local machine
 
@@ -349,7 +349,7 @@ terragrunt run --all output
 
 ## Destroy
 
-The development lab leaf already has EC2 termination/stop protection disabled, so destroy the whole graph directly through Terragrunt:
+Termination protection must be disabled before destroying the EC2 nodes. First update `enable_termination_protection = false` in the EC2 leaf and apply that change, then destroy the whole graph:
 
 ```bash
 cd infrastructure/live/dev/us-east-1
@@ -392,7 +392,7 @@ Always review `terragrunt plan` after import because this revision manages the o
 - All nodes receive launch-time public addresses because the subnet has no NAT gateway; only server-1 also gets an EIP. K3s control-plane/etcd/agent traffic stays on private addresses and the shared security group.
 - EBS is encrypted.
 - K3s kubeconfig credentials live in sensitive Terraform state and in the local kubeconfig file, which is written with mode `600` outside the repository.
-- EC2 API termination and stop protection are disabled in this temporary development lab profile so repeated lab teardown/rebuilds work normally.
+- EC2 API termination protection is enabled for all five nodes; stop protection is disabled.
 - Traefik dashboard is not public by default.
 - Never commit kubeconfig, Terraform state, cloud credentials, Cloudflare tokens or private keys.
 
