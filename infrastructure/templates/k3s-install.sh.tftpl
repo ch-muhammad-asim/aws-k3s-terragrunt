@@ -106,6 +106,7 @@ case "$NODE_ROLE" in
         --token "$K3S_TOKEN" \
         --node-name "$NODE_NAME" \
         --node-ip "$PRIVATE_IP" \
+        --node-taint "CriticalAddonsOnly=true:NoExecute" \
         --tls-san "$PUBLIC_IP" \
         --tls-san "$PRIVATE_IP" \
         --write-kubeconfig-mode 600 ${traefik_flag}
@@ -121,6 +122,7 @@ case "$NODE_ROLE" in
         --token "$K3S_TOKEN" \
         --node-name "$NODE_NAME" \
         --node-ip "$PRIVATE_IP" \
+        --node-taint "CriticalAddonsOnly=true:NoExecute" \
         --tls-san "$PUBLIC_IP" \
         --tls-san "$PRIVATE_IP" \
         --write-kubeconfig-mode 600 ${traefik_flag}
