@@ -106,7 +106,7 @@ This `dev/us-east-1` profile is intentionally sized as a compact five-node K3s d
 - no Spot Instances;
 - only server-1 consumes an Elastic IP.
 
-This sandbox profile intentionally uses 100 GiB gp3 root volumes on all five nodes. The control-plane nodes use `t3a.medium`, while the two workers remain `t3.small`.
+This lab profile intentionally uses 100 GiB gp3 root volumes on all five nodes. The control-plane nodes use `t3a.medium`, while the two workers remain `t3.small`.
 
 
 ## Pinned versions
